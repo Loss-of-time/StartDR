@@ -14,11 +14,10 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-from MINE.schema.retriever import RetrievedDrugCandidate
-
 from ..constant import CACHE_DIR
 from ..kg import list_candidate_text_index_records
 from ..schema import CandidateTextIndexRecord, DrugRecRecord, Retriver
+from ..schema.retriever import RetrievedDrugCandidate
 from ..utils.log import get_console, setup_logging
 
 LOGGER = logging.getLogger("MINE.retrieval.dense")

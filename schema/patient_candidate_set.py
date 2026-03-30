@@ -12,7 +12,7 @@ from .drugrec import DatasetSplit, DrugRecMedicine, DrugRecRecord
 """
 
 NullableScore: TypeAlias = float | None
-PatientCandidateRetriever: TypeAlias = Literal["bm25"]
+PatientCandidateRetriever: TypeAlias = Literal["bm25", "pyserini_bm25"]
 PatientCandidateTopK: TypeAlias = Literal[50]
 
 

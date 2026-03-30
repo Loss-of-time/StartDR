@@ -8,7 +8,7 @@
 
 - 读取 `DrugRec` 患者样本
 - 从 Neo4j 导出药品文本语料
-- 运行 `bm25` 与 `dense` 两类召回实验
+- 运行 `bm25`、`pyserini_bm25` 与 `dense` 三类召回实验
 - 输出离线评测结果，给后续主线整理提供依据
 
 请从工作区根目录 `pyneo/` 启动，使用项目限定导入，例如 `python -m MINE.kg`。
@@ -120,11 +120,22 @@ MINE/
 - 首次运行会生成药品向量缓存到 `MINE/data/cache/`
 - 查询侧会追加检索 instruction，再与药品向量做相似度排序
 
+### `retrieval/pyserini_bm25.py`
+
+基于 `Pyserini` / Lucene 的 BM25 召回实现。
+
+当前实现特点：
+
+- 首次运行会在 `MINE/data/cache/pyserini_bm25_zh/` 构建本地 Lucene 索引
+- 索引文档仍然使用 `治疗 / 禁用 / 成分` 文本
+- 查询仍然使用患者 `diagnosis + symptom`
+- 检索阶段使用 Lucene BM25，参数显式设为 `k1=1.5`、`b=0.75`
+
 ### `retrieval/registry.py`
 
 检索器注册入口。
 
-- `build_retriver(name: str)` 当前实际只支持 `bm25` 和 `dense`
+- `build_retriver(name: str)` 当前实际支持 `bm25`、`pyserini_bm25` 和 `dense`
 - `get_retriver_names()` 仍返回 `dual_tower` 占位名，但当前目录下没有对应实现文件，不能直接构造
 
 ### `metrics/retriver.py`
@@ -161,6 +172,8 @@ MINE/
 
 - `DrugRec.jsonl`：规范化后的患者样本
 - `DrugRec0328/`：训练、验证、测试切分结果
+- `DrugRec0330/`：`0.6 / 0.2 / 0.2` 训练、验证、测试切分结果
+- `patient_candidate/`：冻结候选集样本导出目录
 - `cache/`：Neo4j 查询缓存、稠密检索向量缓存
 - `split.py`：数据切分脚本
 - `DrugRec_处理说明.md`：数据处理说明
@@ -182,7 +195,7 @@ MINE/
 运行前至少需要安装与当前脚本直接相关的依赖：
 
 - 公共依赖：`neo4j`、`rich`
-- BM25 相关：`jieba`、`rank-bm25`
+- BM25 相关：`jieba`、`rank-bm25`、`pyserini`
 - Dense 相关：`torch`、`transformers`、`jaxtyping`
 
 示例命令：
@@ -192,16 +205,20 @@ python -m MINE.input_process
 python -m MINE.kg
 python -m MINE.retrieval.bm25
 python -m MINE.retrieval.dense
-python MINE/data/split.py --train 0.8 --test 0.2 --dev 0 --seed 328
+python MINE/data/split.py --train 0.6 --test 0.2 --dev 0.2 --output-dir MINE/data/DrugRec0330
+python -m MINE.patient_candidates --input-dir MINE/data/DrugRec0330 --split test
 python -m MINE.metrics.retriver --retriver bm25 --top-k 10 --output-name bm25_test_k10
+python -m MINE.metrics.retriver --retriver pyserini_bm25 --top-k 50 --output-name pyserini_bm25_test_k50
 python -m MINE.metrics.retriver --retriver dense --top-k 50 --output-name dense_test_k50
 ```
+
+`python -m MINE.patient_candidates` 当前默认使用 `pyserini_bm25` 生成 `top50` 候选集，并写入 `MINE/data/patient_candidate/<retriver>_top50/{split}.jsonl`。
 
 ## 当前状态
 
 截至 `2026-03-30`，`MINE/` 当前可确认的能力边界是：
 
-- 已有患者读取、Neo4j 查询、BM25 召回、Dense 召回、离线评测这条最短实验链路
+- 已有患者读取、Neo4j 查询、BM25 召回、Pyserini BM25 召回、Dense 召回、离线评测这条最短实验链路
 - 文档、数据、缓存、输出目录以本地实验资源为主，不按仓库源码管理
 - 检索注册表里仍留有 `dual_tower` 占位名，但当前仓库中没有对应实现，不能视为可用能力
 

@@ -16,7 +16,12 @@ from transformers import (
 
 from ..constant import CACHE_DIR
 from ..kg import list_full_drug_details
-from ..schema import DrugRecMedicine, DrugRecRecord, RetrievedDrugCandidate, Retriver
+from ..schema import (
+    DrugRecMedicine,
+    DrugRecRecord,
+    RetrievedDrugCandidate,
+    Retriver,
+)
 from ..utils.log import get_console, setup_logging
 
 LOGGER = logging.getLogger("MINE.retrieval.dense")

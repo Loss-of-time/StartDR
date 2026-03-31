@@ -5,12 +5,13 @@ from typing import Literal, NotRequired, TypeAlias, TypedDict
 """
 ``MINE/data/DrugRec.jsonl`` 规范化结构的 ``TypedDict`` 定义。
 
-以下约定基于 2026-03-27 的一次全量流式扫描与规范化结果。
+以下约定基于 2026-03-31 的一次全量流式扫描与字段统一结果。
 
 - 顶层记录总数：21,000
 - ``conflict`` 和 ``medicine_num`` 在 2,049 条记录中缺失
 - ``medicine_num`` 是源字段，不应直接视为 ``len(medicine)``
-- ``ingredients`` 和 ``interaction`` 存在多种对象形态，因此建模为联合类型
+- ``ingredients`` 固定使用 ``ingredient_id``
+- ``interaction`` 固定使用 ``interaction_id`` 与 ``name``
 - 所有 ``drugid`` 统一为字符串
 - 所有 ``NaN`` / ``Infinity`` / ``-Infinity`` 统一为 ``null``
 - 除以上两点外，其余字段尽量保持原始结构不变
@@ -29,39 +30,14 @@ class DrugCaution(TypedDict):
     crowd_id: int
 
 
-class DrugIngredientById(TypedDict):
-    id: int
-    ingredient: NullableString
-
-
-class DrugIngredientByIngredientId(TypedDict):
+class DrugIngredient(TypedDict):
     ingredient_id: NullableInteger
     ingredient: NullableString
 
 
-DrugIngredient: TypeAlias = DrugIngredientById | DrugIngredientByIngredientId
-
-
-class DrugInteractionById(TypedDict):
-    id: int
-    name: str
-
-
-class DrugInteractionByInteractionIdAndName(TypedDict):
+class DrugInteraction(TypedDict):
     interaction_id: int
     name: str
-
-
-class DrugInteractionByInteractionIdAndText(TypedDict):
-    interaction_id: int
-    interaction: str
-
-
-DrugInteraction: TypeAlias = (
-    DrugInteractionById
-    | DrugInteractionByInteractionIdAndName
-    | DrugInteractionByInteractionIdAndText
-)
 
 
 class DrugTreat(TypedDict):
@@ -124,12 +100,7 @@ __all__ = [
     "DatasetSplit",
     "DrugCaution",
     "DrugIngredient",
-    "DrugIngredientById",
-    "DrugIngredientByIngredientId",
     "DrugInteraction",
-    "DrugInteractionById",
-    "DrugInteractionByInteractionIdAndName",
-    "DrugInteractionByInteractionIdAndText",
     "DrugRecConflictMedicine",
     "DrugRecMedicine",
     "DrugRecOnMedicine",

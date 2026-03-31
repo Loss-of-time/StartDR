@@ -28,7 +28,6 @@ MODEL_ID = "DMetaSoul/sbert-chinese-general-v2"  # 检索 embedding 模型
 
 QUERY_INSTRUCTION = "为这个句子生成表示以用于检索相关文章：" # 检索用 instruction
 
-# TODO 目前使用训练好的网Bert模型 以后可以尝试微调Bert
 # 这个只是中文基座模型不是专门的双塔检索模型，在TraceDR里用于为后面的异构图检索提供向量化数据
 # MODEL_ID = "hfl/chinese-roberta-wwm-ext"  # roberta 输出的 embbding 是 768维的
 
@@ -96,7 +95,7 @@ def get_drug_docs(drugs: list[CandidateTextIndexRecord]) -> list[str]:
 
         append(
             f"药品:{drug['name'] or 'None'}"
-            # f" || 批准文号:{drug['cman'] or 'None'}" # 几乎是噪声
+            # f" || 批准文号:{drug['CMAN'] or 'None'}" # 几乎是噪声
             f" || 治疗:{treatments}"
             # f" || 慎用:{cautions}" # 暂时去除 节约文本长度
             # f" || 成分:{ingredients}" # 暂时去除

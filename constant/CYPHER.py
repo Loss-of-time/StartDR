@@ -5,7 +5,7 @@ LIST_DRUG_INDEX_QUERY = """
 MATCH (d:`药品`)
 RETURN toInteger(last(split(elementId(d), ":"))) AS drugid,
        d.name AS name,
-       d.number AS cman
+       d.number AS CMAN
 """
 
 # 导出药品基础详情，聚合治疗病症、慎用人群及结果、药物成分，供轻量详情展示使用
@@ -32,11 +32,11 @@ LIST_SIMPLE_DRUG_DETAIL_QUERY = """
                     OPTIONAL MATCH (drug)-[:成分*0..3]->(ingre:`药物`)
                     RETURN collect(DISTINCT ingre.name) AS ingredients
                 }
-                RETURN toInteger(last(split(elementId(drug), ":"))) AS drugid,
-                       drug.name AS name,
-                       treatments,
-                       cautions,
-                       ingredients
+RETURN toInteger(last(split(elementId(drug), ":"))) AS drugid,
+       drug.name AS name,
+       treatments,
+       cautions,
+       ingredients
                 """
 
 # 给每个“药品”节点构建一份可用于文本检索和索引的汇总信息，把药品本身、治疗病症、慎用人群、成分都拉平到一条结果里
@@ -49,7 +49,7 @@ WITH toInteger(last(split(elementId(drug), ":"))) AS drugid,
          DISTINCT CASE
              WHEN treatment IS NULL OR treatment.name IS NULL THEN NULL
              ELSE {
-                 treatid: toInteger(last(split(elementId(treatment), ":"))),
+                 treat_id: toInteger(last(split(elementId(treatment), ":"))),
                  treat: treatment.name
              }
          END
@@ -75,7 +75,7 @@ OPTIONAL MATCH (drug)-[:成分*0..3]->(ing:`药物`)
 RETURN
     drugid,
     drug.name AS name,
-    drug.number AS cman,
+    drug.number AS CMAN,
     [x IN treat_rows WHERE x IS NOT NULL] AS treat_rows,
     [x IN caution_rows WHERE x IS NOT NULL] AS caution_rows,
     [x IN collect(
@@ -124,12 +124,12 @@ OPTIONAL MATCH (drug)-[:成分*0..3]->(ingredient:`药物`)
 WITH drug, caution_rows, treat_rows,
      collect(
          DISTINCT CASE
-             WHEN ingredient IS NULL OR ingredient.name IS NULL THEN NULL
-             ELSE {
-                 id: toInteger(last(split(elementId(ingredient), ":"))),
-                 ingredient: ingredient.name
-             }
-         END
+                WHEN ingredient IS NULL OR ingredient.name IS NULL THEN NULL
+                ELSE {
+                    ingredient_id: toInteger(last(split(elementId(ingredient), ":"))),
+                    ingredient: ingredient.name
+                }
+            END
      ) AS ingredient_rows
 OPTIONAL MATCH (drug)-[:相互作用*0..3]->(interaction:`药物`)
 RETURN
@@ -141,7 +141,7 @@ RETURN
             DISTINCT CASE
                 WHEN interaction IS NULL OR interaction.name IS NULL THEN NULL
                 ELSE {
-                    id: toInteger(last(split(elementId(interaction), ":"))),
+                    interaction_id: toInteger(last(split(elementId(interaction), ":"))),
                     name: interaction.name
                 }
             END

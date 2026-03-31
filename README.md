@@ -219,6 +219,7 @@ python -m MINE.metrics.retriver --retriver dense --top-k 50 --output-name dense_
 截至 `2026-03-30`，`MINE/` 当前可确认的能力边界是：
 
 - 已有患者读取、Neo4j 查询、BM25 召回、Pyserini BM25 召回、Dense 召回、离线评测这条最短实验链路
+- `DrugRec.jsonl`、KG 全量药品详情与冻结候选集中的 `ingredients` / `interaction` 字段现已统一为单一命名，不再保留别名
 - 文档、数据、缓存、输出目录以本地实验资源为主，不按仓库源码管理
 - 检索注册表里仍留有 `dual_tower` 占位名，但当前仓库中没有对应实现，不能视为可用能力
 

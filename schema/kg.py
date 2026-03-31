@@ -31,7 +31,7 @@ class SimpleDrugDetailRecord(TypedDict):
 
 
 class CandidateTextTreatRow(TypedDict):
-    treatid: int
+    treat_id: int
     treat: str
 
 
@@ -50,7 +50,7 @@ class CandidateTextIngredientRow(TypedDict):
 class CandidateTextIndexRecord(TypedDict):
     drugid: int
     name: NullableString
-    cman: NullableString
+    CMAN: NullableString
     treat_rows: list[CandidateTextTreatRow]
     caution_rows: list[CandidateTextCautionRow]
     ingredient_rows: list[CandidateTextIngredientRow]

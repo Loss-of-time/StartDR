@@ -6,10 +6,9 @@ from pickle import HIGHEST_PROTOCOL, dump, load
 from typing import TypeVar
 
 from ..constant import CACHE_DIR
+from ..paths import PROJECT_DIR
 
 R = TypeVar("R")  # 原函数的返回值类型
-
-PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 
 def _build_cache_prefix(func: Callable[[], R]) -> str:

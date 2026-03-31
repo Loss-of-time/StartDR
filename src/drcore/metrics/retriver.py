@@ -7,6 +7,7 @@ from pathlib import Path
 from rich.progress import Progress
 
 from ..input_process import load_jsonl_limit
+from ..paths import DATA_DIR, OUTPUT_DIR
 from ..retrieval import build_retriver, get_retriver_names
 from ..schema import (
     DrugRecMedicine,
@@ -20,10 +21,10 @@ from ..schema import (
 from ..utils.log import get_console, setup_logging
 
 DEFAULT_INPUT = (
-    Path(__file__).resolve().parents[1] / "data" / "DrugRec0328" / "test.jsonl"
+    DATA_DIR / "DrugRec0328" / "test.jsonl"
 )
-DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[1] / "output" / "retriver"
-LOGGER = logging.getLogger("MINE.metrics.retriver")
+DEFAULT_OUTPUT_DIR = OUTPUT_DIR / "retriver"
+LOGGER = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:

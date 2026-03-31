@@ -20,7 +20,7 @@ DRIVER: Final[Driver] = GraphDatabase.driver(
     notifications_min_severity=NotificationMinimumSeverity.OFF,
 )
 
-LOGGER = logging.getLogger("MINE.kg")
+LOGGER = logging.getLogger(__name__)
 _DRUG_DETAIL_MAP: dict[str, DrugRecMedicine] | None = None
 
 
@@ -87,10 +87,15 @@ def get_drug_details_by_ids(drug_ids: list[str]) -> list[DrugRecMedicine]:
 
     return details
 
-if __name__ == "__main__":
+
+def main() -> None:
     # 由于文本量巨大，禁止使用 logger 打印函数输出
     log_path = setup_logging()
     print("开始获取：")
     drug_detail_map = _get_drug_detail_map_singleton()
     first_drugid = next(iter(drug_detail_map))
     print(first_drugid, drug_detail_map[first_drugid])
+
+
+if __name__ == "__main__":
+    main()

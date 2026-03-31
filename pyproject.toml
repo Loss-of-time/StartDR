@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "StartDR"
+version = "0.1.0"
+description = "DrugRec 患者数据、知识图谱与检索实验的最短链路工程。"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "jaxtyping",
+    "jieba",
+    "neo4j",
+    "pyserini",
+    "rank-bm25",
+    "rich",
+    "torch",
+    "transformers",
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu126", marker = "sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[project.scripts]
+input-process = "drcore.input_process:main"
+kg-export = "drcore.kg:main"
+patient-candidates = "drcore.patient_candidates:main"
+retrieval-bm25 = "drcore.retrieval.bm25:main"
+retrieval-dense = "drcore.retrieval.dense:main"
+retriver-eval = "drcore.metrics.retriver:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/drcore"]

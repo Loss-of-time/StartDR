@@ -1,4 +1,6 @@
 **/__pycache__
+.vscode/
+.venv/
 
 docs/
 !docs/.gitkeep
@@ -9,3 +11,5 @@ data/
 
 output/
 !output/.gitkeep
+
+misc/

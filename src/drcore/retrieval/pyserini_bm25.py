@@ -5,6 +5,7 @@ from pyserini.index.lucene import LuceneIndexer
 from pyserini.search.lucene import LuceneSearcher
 
 from ..kg import list_full_drug_details
+from ..paths import DATA_DIR
 from ..schema import (
     DrugRecMedicine,
     DrugRecRecord,
@@ -12,13 +13,8 @@ from ..schema import (
     Retriver,
 )
 
-LOGGER = logging.getLogger("MINE.retrieval.pyserini_bm25")
-INDEX_DIR = (
-    Path(__file__).resolve().parents[1]
-    / "data"
-    / "cache"
-    / "pyserini_bm25_zh"
-)
+LOGGER = logging.getLogger(__name__)
+INDEX_DIR = DATA_DIR / "cache" / "pyserini_bm25_zh"
 
 
 def build_document(drug: DrugRecMedicine) -> str:

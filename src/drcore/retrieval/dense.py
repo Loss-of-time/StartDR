@@ -24,7 +24,7 @@ from ..schema import (
 )
 from ..utils.log import get_console, setup_logging
 
-LOGGER = logging.getLogger("MINE.retrieval.dense")
+LOGGER = logging.getLogger(__name__)
 
 # 512的文档长度够用
 # MODEL_ID = "sentence-transformers/distiluse-base-multilingual-cased-v2"
@@ -235,7 +235,7 @@ class DenseRetriver(Retriver):
         ]
 
 
-if __name__ == "__main__":
+def main() -> None:
     log_path = setup_logging()
     cache_path = get_dense_embedding_cache_path()
     LOGGER.info("日志文件: %s", log_path.resolve())
@@ -255,3 +255,7 @@ if __name__ == "__main__":
         retriver._drug_embeddings.shape[1],
     )
     LOGGER.info("缓存已写入: %s", cache_path.resolve())
+
+
+if __name__ == "__main__":
+    main()

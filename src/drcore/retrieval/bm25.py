@@ -27,7 +27,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # 2. 关闭 jieba 的加载提示
 jieba.setLogLevel(logging.ERROR)
 
-LOGGER = logging.getLogger("MINE.retrieval.bm25")
+LOGGER = logging.getLogger(__name__)
 
 
 def get_corpus(
@@ -103,7 +103,7 @@ class BM25Retriver(Retriver):
         ]
 
 
-if __name__ == "__main__":
+def main() -> None:
     from ..input_process import get_patients
 
     log_path = setup_logging()
@@ -144,3 +144,7 @@ if __name__ == "__main__":
 
     LOGGER.info("日志文件: %s", log_path.resolve())
     LOGGER.info("\n%s", "\n".join(lines))
+
+
+if __name__ == "__main__":
+    main()

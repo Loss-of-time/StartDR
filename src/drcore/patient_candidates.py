@@ -7,6 +7,7 @@ from rich.progress import Progress
 
 from .input_process import load_jsonl_limit
 from .kg import list_full_drug_details
+from .paths import DATA_DIR
 from .retrieval import build_retriver
 from .schema import (
     CandidateDrug,
@@ -22,12 +23,12 @@ from .schema import (
 from .utils.log import get_console, setup_logging
 
 DEFAULT_OUTPUT_DIR = (
-    Path(__file__).resolve().parent / "data" / "patient_candidate"
+    DATA_DIR / "patient_candidate"
 )
-DEFAULT_INPUT_DIR = Path(__file__).resolve().parent / "data" / "DrugRec0328"
+DEFAULT_INPUT_DIR = DATA_DIR / "DrugRec0328"
 DEFAULT_RETRIEVER_NAME: PatientCandidateRetriever = "pyserini_bm25"
 DEFAULT_TOP_K: PatientCandidateTopK = 50
-LOGGER = logging.getLogger("MINE.patient_candidates")
+LOGGER = logging.getLogger(__name__)
 
 
 def build_retrieval_query(patient: DrugRecRecord) -> str:

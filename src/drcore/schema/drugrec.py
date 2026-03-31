@@ -1,9 +1,8 @@
-from __future__ import annotations
 
 from typing import Literal, NotRequired, TypeAlias, TypedDict
 
 """
-``MINE/data/DrugRec.jsonl`` 规范化结构的 ``TypedDict`` 定义。
+``data/DrugRec.jsonl`` 规范化结构的 ``TypedDict`` 定义。
 
 以下约定基于 2026-03-31 的一次全量流式扫描与字段统一结果。
 

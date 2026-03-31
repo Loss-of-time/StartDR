@@ -5,8 +5,10 @@ from pathlib import Path
 from rich.console import Console
 from rich.logging import RichHandler
 
-PROJECT_DIR = Path(__file__).resolve().parents[1]
-LOG_DIR = PROJECT_DIR / "output" / "log"
+from ..paths import OUTPUT_DIR, PACKAGE_DIR
+
+LOG_DIR = OUTPUT_DIR / "log"
+ROOT_LOGGER_NAME = PACKAGE_DIR.name
 CONSOLE = Console()
 _CURRENT_LOG_PATH: Path | None = None
 
@@ -23,7 +25,7 @@ def get_console() -> Console:
 def setup_logging(level: int = logging.INFO) -> Path:
     global _CURRENT_LOG_PATH
 
-    logger = logging.getLogger("MINE")
+    logger = logging.getLogger(ROOT_LOGGER_NAME)
     if _CURRENT_LOG_PATH is not None and logger.handlers:
         return _CURRENT_LOG_PATH
 

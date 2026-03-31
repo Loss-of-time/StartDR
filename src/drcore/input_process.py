@@ -4,12 +4,13 @@ from pathlib import Path
 from typing import cast
 
 # 一定要加前面这个点 "."
+from .paths import DATA_DIR
 from .schema import DrugRecRecord
 from .utils.log import setup_logging
 
 # TODO 使用配置文件进行配置
-FILE = Path(__file__).resolve().parent / "data" / "DrugRec.jsonl"
-LOGGER = logging.getLogger("MINE.input_process")
+FILE = DATA_DIR / "DrugRec.jsonl"
+LOGGER = logging.getLogger(__name__)
 
 
 def get_patients(number: int) -> list[DrugRecRecord]:
@@ -43,9 +44,13 @@ def load_jsonl_limit(
         return records
 
 
-if __name__ == "__main__":
+def main() -> None:
     log_path = setup_logging()
     patients = get_patients(10)
     LOGGER.info("日志文件: %s", log_path.resolve())
     LOGGER.info("读取前 10 条患者样本成功，共 %s 条。", len(patients))
     LOGGER.info("样本 ID 预览: %s", [patient["id"] for patient in patients[:3]])
+
+
+if __name__ == "__main__":
+    main()

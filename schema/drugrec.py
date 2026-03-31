@@ -14,6 +14,8 @@ from typing import Literal, NotRequired, TypeAlias, TypedDict
 - ``interaction`` 固定使用 ``interaction_id`` 与 ``name``
 - 所有 ``drugid`` 统一为字符串
 - 所有 ``NaN`` / ``Infinity`` / ``-Infinity`` 统一为 ``null``
+- ``medicine`` / ``on_medicine`` / ``conflict`` 统一使用同一套药品结构
+- ``treat`` 使用可空字段覆盖非空字段，由所属字段名表达业务语义
 - 除以上两点外，其余字段尽量保持原始结构不变
 """
 
@@ -24,8 +26,8 @@ NullableCMAN: TypeAlias = str | None
 
 
 class DrugCaution(TypedDict):
-    caution_level: str
-    caution_levelid: int
+    caution_level: NullableString
+    caution_levelid: NullableInteger
     crowd: str
     crowd_id: int
 
@@ -41,11 +43,6 @@ class DrugInteraction(TypedDict):
 
 
 class DrugTreat(TypedDict):
-    treat: str
-    treat_id: int
-
-
-class NullableDrugTreat(TypedDict):
     treat: NullableString
     treat_id: NullableInteger
 
@@ -60,26 +57,6 @@ class DrugRecMedicine(TypedDict):
     treat: list[DrugTreat]
 
 
-class DrugRecConflictMedicine(TypedDict):
-    CMAN: NullableCMAN
-    caution: list[DrugCaution]
-    drugid: str
-    ingredients: list[DrugIngredient]
-    interaction: list[DrugInteraction]
-    name: str
-    treat: list[DrugTreat]
-
-
-class DrugRecOnMedicine(TypedDict):
-    CMAN: NullableCMAN
-    caution: list[DrugCaution]
-    drugid: str
-    ingredients: list[DrugIngredient]
-    interaction: list[DrugInteraction]
-    name: str
-    treat: list[NullableDrugTreat]
-
-
 class DrugRecRecord(TypedDict):
     age: int
     allergen: list[str]
@@ -89,10 +66,10 @@ class DrugRecRecord(TypedDict):
     group: list[str]
     id: str
     medicine: list[DrugRecMedicine]
-    on_medicine: list[DrugRecOnMedicine]
+    on_medicine: list[DrugRecMedicine]
     part: DatasetSplit
     symptom: list[str]
-    conflict: NotRequired[list[DrugRecConflictMedicine]]
+    conflict: NotRequired[list[DrugRecMedicine]]
     medicine_num: NotRequired[int]
 
 
@@ -101,13 +78,10 @@ __all__ = [
     "DrugCaution",
     "DrugIngredient",
     "DrugInteraction",
-    "DrugRecConflictMedicine",
     "DrugRecMedicine",
-    "DrugRecOnMedicine",
     "DrugRecRecord",
     "DrugTreat",
     "NullableCMAN",
-    "NullableDrugTreat",
     "NullableInteger",
     "NullableString",
 ]

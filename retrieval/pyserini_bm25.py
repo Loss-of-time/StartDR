@@ -4,12 +4,12 @@ from pathlib import Path
 from pyserini.index.lucene import LuceneIndexer
 from pyserini.search.lucene import LuceneSearcher
 
-from ..kg import list_simple_drug_details
+from ..kg import list_full_drug_details
 from ..schema import (
+    DrugRecMedicine,
     DrugRecRecord,
     RetrievedDrugCandidate,
     Retriver,
-    SimpleDrugDetailRecord,
 )
 
 LOGGER = logging.getLogger("MINE.retrieval.pyserini_bm25")
@@ -21,10 +21,23 @@ INDEX_DIR = (
 )
 
 
-def build_document(record: SimpleDrugDetailRecord) -> str:
-    treatments = record["treatments"]
-    cautions = record["cautions"]
-    ingredients = record["ingredients"]
+def build_document(drug: DrugRecMedicine) -> str:
+    treatments = [
+        row["treat"]
+        for row in drug["treat"]
+        if row["treat"] is not None
+    ]
+    cautions = [
+        f"{row['crowd']}{row['caution_level']}"
+        if row["caution_level"]
+        else row["crowd"]
+        for row in drug["caution"]
+    ]
+    ingredients = [
+        row["ingredient"]
+        for row in drug["ingredients"]
+        if row["ingredient"] is not None
+    ]
     return (
         f"治疗:{', '.join(treatments) if treatments else 'None'}"
         f" || 禁用:{', '.join(cautions) if cautions else 'None'}"
@@ -44,7 +57,7 @@ def _has_index(index_dir: Path) -> bool:
 
 def _build_index(
     index_dir: Path,
-    data: list[SimpleDrugDetailRecord],
+    drugs: list[DrugRecMedicine],
 ) -> None:
     index_dir.mkdir(parents=True, exist_ok=True)
     indexer = LuceneIndexer(
@@ -53,11 +66,11 @@ def _build_index(
     )
     batch: list[dict[str, str]] = []
 
-    for record in data:
+    for drug in drugs:
         batch.append(
             {
-                "id": str(record["drugid"]),
-                "contents": build_document(record),
+                "id": drug["drugid"],
+                "contents": build_document(drug),
             }
         )
         if len(batch) >= 1000:
@@ -72,17 +85,17 @@ def _build_index(
 class PyseriniBM25Retriver(Retriver):
     def __init__(
         self,
-        data: list[SimpleDrugDetailRecord] | None = None,
+        drugs: list[DrugRecMedicine] | None = None,
         index_dir: Path = INDEX_DIR,
     ) -> None:
-        source_data = list_simple_drug_details() if data is None else data
+        source_drugs = list_full_drug_details() if drugs is None else drugs
         if not _has_index(index_dir):
             LOGGER.info("Pyserini 索引不存在，开始构建: %s", index_dir.resolve())
-            _build_index(index_dir, source_data)
+            _build_index(index_dir, source_drugs)
 
         self.drug_name_by_id = {
-            str(record["drugid"]): record["name"] or "None"
-            for record in source_data
+            drug["drugid"]: drug["name"] or "None"
+            for drug in source_drugs
         }
         self.searcher = LuceneSearcher(str(index_dir))
         self.searcher.set_language("zh")

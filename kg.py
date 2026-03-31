@@ -6,16 +6,10 @@ from typing import Final, cast
 from neo4j import Driver, GraphDatabase, NotificationMinimumSeverity
 
 from .constant import (
-    LIST_CANDIDATE_TEXT_INDEX_QUERY,
     LIST_DRUG_INDEX_QUERY,
     LIST_FULL_DRUG_DETAIL_QUERY,
-    LIST_SIMPLE_DRUG_DETAIL_QUERY,
 )
-from .schema import (
-    CandidateTextIndexRecord,
-    DrugRecMedicine,
-    SimpleDrugDetailRecord,
-)
+from .schema import DrugRecMedicine
 from .utils.kg_cache_decorator import kg_cache
 from .utils.log import setup_logging
 
@@ -37,25 +31,6 @@ def list_drug_ids() -> list[int]:
     with DRIVER.session() as session:
         result = session.run(LIST_DRUG_INDEX_QUERY)
         return [record["drugid"] for record in result]
-
-
-@kg_cache
-def list_simple_drug_details() -> list[SimpleDrugDetailRecord]:
-    # 获取所有药品的轻量文本检索语料
-    with DRIVER.session() as session:
-        result = session.run(LIST_SIMPLE_DRUG_DETAIL_QUERY)
-        return [
-            cast(SimpleDrugDetailRecord, record.data()) for record in result
-        ]
-
-
-@kg_cache
-def list_candidate_text_index_records() -> list[CandidateTextIndexRecord]:
-    with DRIVER.session() as session:
-        result = session.run(LIST_CANDIDATE_TEXT_INDEX_QUERY)
-        return [
-            cast(CandidateTextIndexRecord, record.data()) for record in result
-        ]
 
 
 @kg_cache

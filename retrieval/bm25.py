@@ -7,12 +7,12 @@ import warnings
 import jieba
 from rank_bm25 import BM25Okapi
 
-from ..kg import list_simple_drug_details
+from ..kg import list_full_drug_details
 from ..schema import (
+    DrugRecMedicine,
     DrugRecRecord,
     RetrievedDrugCandidate,
     Retriver,
-    SimpleDrugDetailRecord,
     TokenizedCorpusWithDrugIds,
 )
 from ..utils.log import setup_logging
@@ -31,23 +31,36 @@ LOGGER = logging.getLogger("MINE.retrieval.bm25")
 
 
 def get_corpus(
-    data: list[SimpleDrugDetailRecord],
+    drugs: list[DrugRecMedicine],
 ) -> TokenizedCorpusWithDrugIds:
     tokenized_corpus: list[list[str]] = []
-    drug_ids: list[int] = []
+    drug_ids: list[str] = []
     lcut = jieba.lcut
 
-    for record in data:
-        treatments = record["treatments"]
-        cautions = record["cautions"]
-        ingredients = record["ingredients"]
+    for drug in drugs:
+        treatments = [
+            row["treat"]
+            for row in drug["treat"]
+            if row["treat"] is not None
+        ]
+        cautions = [
+            f"{row['crowd']}{row['caution_level']}"
+            if row["caution_level"]
+            else row["crowd"]
+            for row in drug["caution"]
+        ]
+        ingredients = [
+            row["ingredient"]
+            for row in drug["ingredients"]
+            if row["ingredient"] is not None
+        ]
         document = (
             f"治疗:{', '.join(treatments) if treatments else 'None'}"
             f" || 禁用:{', '.join(cautions) if cautions else 'None'}"
             f" || 成分:{', '.join(ingredients) if ingredients else 'None'}"
         )
         tokenized_corpus.append(lcut(document))
-        drug_ids.append(record["drugid"])
+        drug_ids.append(drug["drugid"])
 
     return tokenized_corpus, drug_ids
 
@@ -61,14 +74,14 @@ def get_query(patient: DrugRecRecord) -> list[str]:
 class BM25Retriver(Retriver):
     def __init__(
         self,
-        data: list[SimpleDrugDetailRecord] | None = None,
+        drugs: list[DrugRecMedicine] | None = None,
     ) -> None:
-        source_data = list_simple_drug_details() if data is None else data
+        source_drugs = list_full_drug_details() if drugs is None else drugs
         self.drug_name_by_id = {
-            str(record["drugid"]): record["name"] or "None"
-            for record in source_data
+            drug["drugid"]: drug["name"] or "None"
+            for drug in source_drugs
         }
-        self.corpus, self.drug_ids = get_corpus(source_data) # 构成药品查询的数据库
+        self.corpus, self.drug_ids = get_corpus(source_drugs) # 构成药品查询的数据库
         self.bm25 = BM25Okapi(self.corpus)
 
     def retrieve(
@@ -83,7 +96,7 @@ class BM25Retriver(Retriver):
         ranked_indices = top_indices[scores[top_indices].argsort()[::-1]]
         return [
             {
-                "drugid": str(self.drug_ids[index]),
+                "drugid": self.drug_ids[index],
                 "score": float(scores[index]),
             }
             for index in ranked_indices

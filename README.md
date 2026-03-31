@@ -93,8 +93,6 @@ MINE/
 当前主要函数：
 
 - `list_drug_ids()`
-- `list_simple_drug_details()`
-- `list_candidate_text_index_records()`
 - `list_full_drug_details()`
 - `get_drug_details_by_ids()`
 
@@ -104,7 +102,7 @@ MINE/
 
 流程是：
 
-1. 从 `kg.py` 读取药品轻量语料
+1. 从 `kg.py` 读取统一药品详情 `DrugRecMedicine`
 2. 拼接 `治疗 / 禁用 / 成分` 文本
 3. 对患者 `diagnosis + symptom` 分词
 4. 返回按分数排序后的候选药品 `drugid`
@@ -118,7 +116,7 @@ MINE/
 - 默认模型为 `DMetaSoul/sbert-chinese-general-v2`
 - 自动选择 `cuda` 或 `cpu`
 - 首次运行会生成药品向量缓存到 `MINE/data/cache/`
-- 查询侧会追加检索 instruction，再与药品向量做相似度排序
+- 查询侧会追加检索 instruction，再与统一药品详情生成的药品向量做相似度排序
 
 ### `retrieval/pyserini_bm25.py`
 
@@ -127,7 +125,7 @@ MINE/
 当前实现特点：
 
 - 首次运行会在 `MINE/data/cache/pyserini_bm25_zh/` 构建本地 Lucene 索引
-- 索引文档仍然使用 `治疗 / 禁用 / 成分` 文本
+- 索引文档由统一药品详情中的 `治疗 / 禁用 / 成分` 字段生成
 - 查询仍然使用患者 `diagnosis + symptom`
 - 检索阶段使用 Lucene BM25，参数显式设为 `k1=1.5`、`b=0.75`
 
@@ -151,11 +149,21 @@ MINE/
 
 集中定义 `TypedDict` 与相关类型别名，当前包含：
 
-- `drugrec.py`：患者样本与药品字段
-- `kg.py`：知识图谱查询结果结构
+- `drugrec.py`：患者样本与统一药品字段
+- `kg.py`：检索阶段共享的辅助类型
 - `metrics.py`：离线评测报告结构
 - `retriever.py`：检索器协议与候选结构
 - `patient_candidate_set.py`：冻结候选集样本结构
+
+`MINE/schema` 的分层生成关系图见 `MINE/docs/schema_generation.puml`。
+其中 `medicine` / `on_medicine` / `conflict` 与检索阶段药品详情统一复用 `DrugRecMedicine`，业务角色通过字段名、参数名与注释表达。
+分拆后的小型 schema 时序图见：
+- `MINE/docs/schema_sequence_01_patient_ingest.puml`
+- `MINE/docs/schema_sequence_02_kg_access.puml`
+- `MINE/docs/schema_sequence_03_retrieval_build.puml`
+- `MINE/docs/schema_sequence_04_retrieval_execute.puml`
+- `MINE/docs/schema_sequence_05_patient_candidates.puml`
+- `MINE/docs/schema_sequence_06_metrics_eval.puml`
 
 ### `utils/log.py`
 
@@ -180,7 +188,7 @@ MINE/
 
 ### `docs/`
 
-本地实验说明目录。当前常见内容是 BM25 相关笔记，但按现有 `.gitignore` 默认不入库。
+本地实验说明目录。当前常见内容是 BM25 相关笔记与 schema 生成关系图，但按现有 `.gitignore` 默认不入库。
 
 ### `output/`
 

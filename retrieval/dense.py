@@ -15,9 +15,8 @@ from transformers import (
 )
 
 from ..constant import CACHE_DIR
-from ..kg import list_candidate_text_index_records
-from ..schema import CandidateTextIndexRecord, DrugRecRecord, Retriver
-from ..schema.retriever import RetrievedDrugCandidate
+from ..kg import list_full_drug_details
+from ..schema import DrugRecMedicine, DrugRecRecord, RetrievedDrugCandidate, Retriver
 from ..utils.log import get_console, setup_logging
 
 LOGGER = logging.getLogger("MINE.retrieval.dense")
@@ -61,18 +60,18 @@ def get_query(patient: DrugRecRecord) -> str:
     return " ".join([*diagnosis, *symptom])
 
 
-def get_drug_docs(drugs: list[CandidateTextIndexRecord]) -> list[str]:
+def get_drug_docs(drugs: list[DrugRecMedicine]) -> list[str]:
     docs: list[str] = []
     append = docs.append
 
     for drug in drugs:
-        treat_rows = drug["treat_rows"]
-        caution_rows = drug["caution_rows"]
-        ingredient_rows = drug["ingredient_rows"]
-
         treatments = (
-            "、".join(row["treat"] for row in treat_rows)
-            if treat_rows
+            "、".join(
+                row["treat"]
+                for row in drug["treat"]
+                if row["treat"] is not None
+            )
+            if drug["treat"]
             else "None"
         )
         cautions = (  # noqa: F841
@@ -82,14 +81,18 @@ def get_drug_docs(drugs: list[CandidateTextIndexRecord]) -> list[str]:
                     if row["caution_level"]
                     else row["crowd"]
                 )
-                for row in caution_rows
+                for row in drug["caution"]
             )
-            if caution_rows
+            if drug["caution"]
             else "None"
         )
         ingredients = (  # noqa: F841
-            "、".join(row["ingredient"] for row in ingredient_rows)
-            if ingredient_rows
+            "、".join(
+                row["ingredient"]
+                for row in drug["ingredients"]
+                if row["ingredient"] is not None
+            )
+            if drug["ingredients"]
             else "None"
         )
 
@@ -117,19 +120,15 @@ def normalize_embedding_matrix(
 class DenseRetriver(Retriver):
     def __init__(
         self,
-        data: list[CandidateTextIndexRecord] | None = None,
+        drugs: list[DrugRecMedicine] | None = None,
     ) -> None:
-        source_data = (
-            list_candidate_text_index_records()
-            if data is None
-            else data
-        )
+        source_drugs = list_full_drug_details() if drugs is None else drugs
         self.drug_name_by_id = {
-            str(record["drugid"]): record["name"] or "None"
-            for record in source_data
+            drug["drugid"]: drug["name"] or "None"
+            for drug in source_drugs
         }
-        self.drug_ids = [record["drugid"] for record in source_data]
-        self.drug_docs = get_drug_docs(source_data)
+        self.drug_ids = [drug["drugid"] for drug in source_drugs]
+        self.drug_docs = get_drug_docs(source_drugs)
         self.device = torch.device(
             "cuda" if torch.cuda.is_available() else "cpu"
         )
@@ -220,7 +219,7 @@ class DenseRetriver(Retriver):
 
         return [
             {
-                "drugid": str(self.drug_ids[index]),
+                "drugid": self.drug_ids[index],
                 "score": float(score),
             }
             for index, score in zip(

@@ -17,12 +17,30 @@ from .metrics import (
     RetriverEvalReport,
     SummaryResult,
 )
+from .model import (
+    DrugNodeNumericFeature,
+    GNNCandidateTarget,
+    GNNEdge,
+    GNNEdgeType,
+    GNNGraphSample,
+    GNNNode,
+    GNNNodeType,
+    NumericFeatureStats,
+)
 from .patient_candidate_set import (
     CandidateDrug,
     NullableScore,
     PatientCandidateRetriever,
     PatientCandidateSet,
     PatientCandidateTopK,
+)
+from .reranker import (
+    EvalStepOutput,
+    RankedDrug,
+    RerankerName,
+    RerankResult,
+    TrainMetrics,
+    TrainStepOutput,
 )
 from .retriever import RetrievedDrugCandidate, Retriver
 
@@ -39,14 +57,28 @@ __all__ = [
     "NullableString",
     "TokenizedCorpusWithDrugIds",
     "MetricsResult",
+    "DrugNodeNumericFeature",
+    "GNNCandidateTarget",
+    "GNNEdge",
+    "GNNEdgeType",
+    "GNNGraphSample",
+    "GNNNode",
+    "GNNNodeType",
     "CandidateDrug",
     "NullableScore",
     "PatientCandidateRetriever",
     "PatientCandidateSet",
     "PatientCandidateTopK",
+    "EvalStepOutput",
+    "NumericFeatureStats",
+    "RankedDrug",
+    "RerankResult",
+    "RerankerName",
     "RetriverEvalConfig",
     "RetriverEvalReport",
     "RetrievedDrugCandidate",
     "Retriver",
     "SummaryResult",
+    "TrainMetrics",
+    "TrainStepOutput",
 ]

@@ -3,10 +3,11 @@ import json
 import logging
 from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
 
 from rich.progress import Progress
 
-from .data.drugrec import load_drugrec_records
+from .data.jsonl import load_jsonl
 from .metrics.retrieval import (
     aggregate_metrics,
     get_gold_ids,
@@ -94,7 +95,11 @@ def main() -> None:
     log_path = setup_logging()
     LOGGER.info("日志文件: %s", log_path.resolve())
     LOGGER.info("开始读取评测数据: %s", args.input.resolve())
-    data = load_drugrec_records(args.input, args.limit)
+    data = load_jsonl(
+        path=args.input,
+        parse_line=lambda row: cast(DrugRecRecord, row),
+        limit=args.limit,
+    )
     LOGGER.info("评测样本数: %s", len(data))
     LOGGER.info("开始构建检索器: %s", args.retriver)
     retriver = build_retriver(args.retriver)

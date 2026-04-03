@@ -1,11 +1,12 @@
 import argparse
+import json
 import logging
 from pathlib import Path
+from typing import cast
 
 from rich.progress import Progress
 
-from .data.drugrec import load_drugrec_records
-from .data.patient_candidate import write_patient_candidate_sets
+from .data.jsonl import load_jsonl, write_jsonl
 from .retrieval import build_retriver
 from .schema import (
     CandidateDrug,
@@ -189,7 +190,11 @@ def main() -> None:
     log_path = setup_logging()
     LOGGER.info("日志文件: %s", log_path.resolve())
     LOGGER.info("开始读取患者数据: %s", input_path.resolve())
-    patients = load_drugrec_records(input_path, args.limit)
+    patients = load_jsonl(
+        path=input_path,
+        parse_line=lambda row: cast(DrugRecRecord, row),
+        limit=args.limit,
+    )
     LOGGER.info("患者样本数: %s", len(patients))
     LOGGER.info("开始构建检索器: %s", retriever_name)
     retriever = build_retriver(retriever_name)
@@ -204,7 +209,11 @@ def main() -> None:
         retriever=retriever,
         drug_detail_map=drug_detail_map,
     )
-    write_patient_candidate_sets(output_path, samples)
+    write_jsonl(
+        path=output_path,
+        rows=samples,
+        serialize_row=lambda row: json.dumps(row, ensure_ascii=False),
+    )
     LOGGER.info("写出完成: %s", output_path.resolve())
 
 

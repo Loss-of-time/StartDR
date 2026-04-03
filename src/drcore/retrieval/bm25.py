@@ -1,5 +1,6 @@
 # 思路：获取所有药物的治疗文本，组合成一条检索语料，再把病人症状组合成查询。
 import logging
+from typing import cast
 
 # from ..schema impo
 import warnings
@@ -7,6 +8,7 @@ import warnings
 import jieba
 from rank_bm25 import BM25Okapi
 
+from ..data.jsonl import load_jsonl
 from ..schema import (
     DrugRecMedicine,
     DrugRecRecord,
@@ -16,6 +18,7 @@ from ..schema import (
 )
 from ..utils.kg import list_full_drug_details
 from ..utils.log import setup_logging
+from ..utils.paths import RESOURCE_DIR
 
 # 患者只取 diagnosis symptom
 # 药品取 treatments cautions ingredients 治疗:... || 禁用:... || 成分:...
@@ -104,11 +107,13 @@ class BM25Retriver(Retriver):
 
 
 def main() -> None:
-    from ..data.drugrec import get_patients
-
     log_path = setup_logging()
     bm25 = BM25Retriver()
-    patients = get_patients(10)
+    patients = load_jsonl(
+        path=RESOURCE_DIR / "DrugRec.jsonl",
+        parse_line=lambda row: cast(DrugRecRecord, row),
+        limit=10,
+    )
     ans = bm25.batch_retrieve(patients)
 
     lines: list[str] = []

@@ -7,7 +7,7 @@ from typing import cast
 from rich.progress import Progress
 
 from .data.jsonl import load_jsonl, write_jsonl
-from .retrieval import build_retriver
+from .retrieval.registry import build_retriver
 from .schema import (
     CandidateDrug,
     DatasetSplit,

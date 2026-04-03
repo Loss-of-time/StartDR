@@ -14,7 +14,6 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-from ..constant import CACHE_DIR
 from ..schema import (
     DrugRecMedicine,
     DrugRecRecord,
@@ -23,8 +22,10 @@ from ..schema import (
 )
 from ..utils.kg import list_full_drug_details
 from ..utils.log import get_console, setup_logging
+from ..utils.paths import RESOURCE_DIR
 
 LOGGER = logging.getLogger(__name__)
+CACHE_DIR = RESOURCE_DIR / "cache"
 
 # 512的文档长度够用
 # MODEL_ID = "sentence-transformers/distiluse-base-multilingual-cased-v2"

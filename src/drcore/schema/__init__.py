@@ -11,6 +11,7 @@ from .drugrec import (
     NullableString,
 )
 from .drugrec_task import (
+    DrugNodeNumericFeature,
     DrugRecCase,
     DrugRecCheckpoint,
     DrugRecMetrics,
@@ -19,9 +20,16 @@ from .drugrec_task import (
     EvalStepOutput,
     GNNMetrics,
     GNNModelInitKwargs,
+    GNNCandidateTarget,
+    GNNEdge,
+    GNNEdgeType,
+    GNNGraphSample,
+    GNNNode,
     GNNNodeScore,
+    GNNNodeType,
     GNNRecResult,
     ModelStateDict,
+    NumericFeatureStats,
     RankedDrug,
     RankedEvidence,
     TrainStepOutput,
@@ -32,16 +40,6 @@ from .metrics import (
     RetriverEvalConfig,
     RetriverEvalReport,
     SummaryResult,
-)
-from .model import (
-    DrugNodeNumericFeature,
-    GNNCandidateTarget,
-    GNNEdge,
-    GNNEdgeType,
-    GNNGraphSample,
-    GNNNode,
-    GNNNodeType,
-    NumericFeatureStats,
 )
 from .patient_candidate_set import (
     CandidateDrug,

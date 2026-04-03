@@ -4,8 +4,9 @@ from inspect import signature
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL, dump, load
 
-from ..constant import CACHE_DIR
-from .paths import PROJECT_DIR
+from .paths import PROJECT_DIR, RESOURCE_DIR
+
+CACHE_DIR = RESOURCE_DIR / "cache"
 
 
 def _build_cache_prefix[R](func: Callable[[], R]) -> str:

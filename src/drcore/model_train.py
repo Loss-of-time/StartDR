@@ -11,14 +11,11 @@ from rich.progress import Progress
 from .data.jsonl import load_jsonl
 from .metrics.drugrec import aggregate_drugrec_metrics, get_drugrec_metrics
 from .metrics.gnn_drugrec import aggregate_gnn_metrics, get_gnn_metrics
-from .model import (
-    DrugRecCheckpoint,
-    DrugRecModel,
-    build_model,
-    get_model_names,
-)
+from .model.drugrec_model import DrugRecModel
+from .model.gnn_reranker.model import GNNModel
 from .schema.drugrec_task import (
     DrugRecCase,
+    DrugRecCheckpoint,
     DrugRecMetrics,
     DrugRecModelName,
     DrugRecResult,
@@ -36,6 +33,9 @@ DEFAULT_DEV_INPUT = (
 DEFAULT_OUTPUT_DIR = OUTPUT_DIR / "model"
 DEFAULT_TOP_K = 50
 LOGGER = logging.getLogger(__name__)
+MODEL_REGISTRY: dict[DrugRecModelName, type[DrugRecModel]] = {
+    "gnn": GNNModel,
+}
 
 
 class TrainEpochResult(TypedDict, total=False):
@@ -73,6 +73,23 @@ class TrainReport(TypedDict):
     best_metric_value: float
     checkpoint_path: str
     epochs: list[TrainEpochResult]
+
+
+def get_model_names() -> list[DrugRecModelName]:
+    """返回当前可训练的推荐模型名称。"""
+    return list(MODEL_REGISTRY)
+
+
+def build_model(
+    name: DrugRecModelName,
+    train_cases: list[DrugRecCase],
+    top_k: int,
+) -> DrugRecModel:
+    """根据名称构建训练态推荐模型。"""
+    return MODEL_REGISTRY[name].build_for_train(
+        train_cases=train_cases,
+        top_k=top_k,
+    )
 
 
 def parse_args() -> argparse.Namespace:

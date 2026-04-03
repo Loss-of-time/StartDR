@@ -10,19 +10,17 @@ from ...metrics.gnn_drugrec import aggregate_gnn_metrics, get_gnn_metrics
 from ...schema.drugrec_task import (
     DrugRecCase,
     DrugRecCheckpoint,
+    GNNEdge,
+    GNNGraphSample,
     DrugRecMetrics,
     EvalStepOutput,
     GNNNodeScore,
     GNNRecResult,
     ModelStateDict,
+    NumericFeatureStats,
     RankedDrug,
     RankedEvidence,
     TrainStepOutput,
-)
-from ...schema.model.gnn_reranker import (
-    GNNEdge,
-    GNNGraphSample,
-    NumericFeatureStats,
 )
 from ..drugrec_model import GNNRecModel
 from .data_set import (

@@ -2,9 +2,9 @@ import math
 from collections.abc import Callable
 
 from ...schema.drugrec import DrugRecMedicine
-from ...schema.drugrec_task import DrugRecCase
-from ...schema.model.gnn_reranker import (
+from ...schema.drugrec_task import (
     DrugNodeNumericFeature,
+    DrugRecCase,
     GNNCandidateTarget,
     GNNEdge,
     GNNEdgeType,

@@ -32,7 +32,6 @@ StartDR/
 ├─ output/                       # 本地输出目录，默认不入库
 ├─ src/
 │  └─ drcore/
-│     ├─ constant/
 │     ├─ data/
 │     ├─ metrics/
 │     ├─ model/
@@ -73,8 +72,6 @@ StartDR/
 当前包含：
 
 - `jsonl.py`：通用 `jsonl` 读写
-- `drugrec.py`：`DrugRecRecord` 加载
-- `patient_candidate.py`：`PatientCandidateSet` 读写
 
 ### `src/drcore/utils/kg.py`
 
@@ -82,7 +79,7 @@ StartDR/
 
 - 连接地址固定为 `bolt://localhost:7687`
 - 当前代码内认证写死为 `neo4j / password`
-- Cypher 常量定义在 `src/drcore/constant/CYPHER.py`
+- Cypher 查询语句直接定义在当前文件内
 - 查询结果会通过 `src/drcore/utils/kg_cache_decorator.py` 缓存到 `resource/cache/`
 
 当前主要函数：
@@ -152,7 +149,6 @@ StartDR/
 当前包含：
 
 - `drugrec_model.py`：统一训练 / 评测接口
-- `registry.py`：模型注册入口
 - `gnn_reranker/`：当前唯一可用的 `gnn` 模型实现
 
 ### `src/drcore/model_train.py`
@@ -162,7 +158,7 @@ StartDR/
 - 默认训练输入：`resource/patient_candidate/pyserini_bm25_top50/train.jsonl`
 - 默认验证输入：`resource/patient_candidate/pyserini_bm25_top50/dev.jsonl`
 - 默认输出目录：`output/model/`
-- 当前仅支持 `gnn` 模型
+- 当前仅支持 `gnn` 模型，模型注册逻辑直接收敛在当前入口文件内
 
 ### `src/drcore/metrics/retrieval.py`
 
@@ -176,6 +172,7 @@ StartDR/
 集中定义 `TypedDict` 与相关类型别名，当前包含：
 
 - `drugrec.py`：患者样本与统一药品字段
+- `drugrec_task.py`：训练任务结果结构与 GNN 局部图结构
 - `kg.py`：检索阶段共享的辅助类型
 - `metrics.py`：离线评测报告结构
 - `retriever.py`：检索器协议与候选结构

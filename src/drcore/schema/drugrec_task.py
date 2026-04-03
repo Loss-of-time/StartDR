@@ -1,15 +1,82 @@
 from collections import OrderedDict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Literal, TypedDict
 
 import torch
 from jaxtyping import Float
 
 from .drugrec import DatasetSplit, DrugRecMedicine, DrugRecRecord
-from .model.gnn_reranker import GNNNodeType, NumericFeatureStats
 from .patient_candidate_set import CandidateDrug
 
 type DrugRecModelName = Literal["gnn"]
+type NodeId = str
+type DrugId = str
+
+GNNNodeType = Literal[
+    "drug",
+    "treat",
+    "caution",
+    "ingredient",
+    "interaction",
+]
+
+GNNEdgeType = Literal[
+    "drug_has_treat",
+    "drug_has_caution",
+    "drug_has_ingredient",
+    "drug_has_interaction",
+    "rev_drug_has_treat",
+    "rev_drug_has_caution",
+    "rev_drug_has_ingredient",
+    "rev_drug_has_interaction",
+]
+
+
+class NumericFeatureStats(TypedDict):
+    score_log_mean: float
+    score_log_std: float
+
+
+@dataclass(slots=True)
+class GNNNode:
+    node_id: NodeId
+    node_type: GNNNodeType
+    text: str
+
+
+@dataclass(slots=True)
+class DrugNodeNumericFeature:
+    retrieval_score: float | None
+    retrieval_rank: int | None
+    is_candidate: int
+    is_on_medicine: int
+
+
+@dataclass(slots=True)
+class GNNEdge:
+    edge_type: GNNEdgeType
+    src_node_id: NodeId
+    dst_node_id: NodeId
+
+
+@dataclass(slots=True)
+class GNNCandidateTarget:
+    drug_node_id: NodeId
+    drugid: DrugId
+    label: int
+
+
+@dataclass(slots=True)
+class GNNGraphSample:
+    patient_id: str
+    split: DatasetSplit
+    patient_text: str
+    gold_drugids: list[DrugId]
+    nodes: list[GNNNode]
+    edges: list[GNNEdge]
+    drug_numeric_features: Mapping[NodeId, DrugNodeNumericFeature]
+    candidate_targets: list[GNNCandidateTarget]
 
 
 class RankedDrug(TypedDict):
@@ -98,6 +165,7 @@ class DrugRecCheckpoint(TypedDict):
 
 
 __all__ = [
+    "DrugNodeNumericFeature",
     "DrugRecCase",
     "DrugRecCheckpoint",
     "DrugRecMetrics",
@@ -106,9 +174,16 @@ __all__ = [
     "EvalStepOutput",
     "GNNMetrics",
     "GNNModelInitKwargs",
+    "GNNCandidateTarget",
+    "GNNEdge",
+    "GNNEdgeType",
+    "GNNGraphSample",
+    "GNNNode",
     "GNNNodeScore",
+    "GNNNodeType",
     "GNNRecResult",
     "ModelStateDict",
+    "NumericFeatureStats",
     "RankedDrug",
     "RankedEvidence",
     "TrainStepOutput",

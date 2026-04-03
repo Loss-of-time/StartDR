@@ -14,7 +14,7 @@ from .metrics.retrieval import (
     get_metrics_result,
     get_summary,
 )
-from .retrieval import build_retriver, get_retriver_names
+from .retrieval.registry import build_retriver, get_retriver_names
 from .schema import (
     DrugRecRecord,
     RetrievedDrugCandidate,

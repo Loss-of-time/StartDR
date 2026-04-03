@@ -1,10 +1,11 @@
 from collections.abc import Sequence
+from typing import cast
 
-from ..schema.drugrec_task import DrugRecCase, DrugRecMetrics, DrugRecResult
+from ..schema.drugrec_task import DrugRecCase, GNNMetrics, GNNRecResult
 
 
-def get_ranked_drugids(
-    result: DrugRecResult,
+def _get_ranked_drugids(
+    result: GNNRecResult,
     top_k: int | None = None,
 ) -> list[str]:
     """提取排序结果中的药物 ID 列表。"""
@@ -14,7 +15,7 @@ def get_ranked_drugids(
     return [ranked_drug["drugid"] for ranked_drug in ranked_drugs[:top_k]]
 
 
-def get_hit(
+def _get_hit(
     gold_drugids: set[str],
     ranked_drugids: Sequence[str],
 ) -> float:
@@ -22,7 +23,7 @@ def get_hit(
     return 1.0 if gold_drugids.intersection(ranked_drugids) else 0.0
 
 
-def get_mrr(
+def _get_mrr(
     gold_drugids: set[str],
     ranked_drugids: Sequence[str],
 ) -> float:
@@ -33,7 +34,7 @@ def get_mrr(
     return 0.0
 
 
-def get_precision_at_k(
+def _get_precision_at_k(
     gold_drugids: set[str],
     ranked_drugids: Sequence[str],
 ) -> float:
@@ -44,7 +45,7 @@ def get_precision_at_k(
     return hit_count / len(ranked_drugids)
 
 
-def get_recall_at_k(
+def _get_recall_at_k(
     gold_drugids: set[str],
     ranked_drugids: Sequence[str],
 ) -> float:
@@ -55,14 +56,14 @@ def get_recall_at_k(
     return hit_count / len(gold_drugids)
 
 
-def get_f1(precision: float, recall: float) -> float:
+def _get_f1(precision: float, recall: float) -> float:
     """根据准确率和召回率计算 F1。"""
     if precision + recall == 0.0:
         return 0.0
     return 2 * precision * recall / (precision + recall)
 
 
-def get_jaccard_at_k(
+def _get_jaccard_at_k(
     gold_drugids: set[str],
     ranked_drugids: Sequence[str],
 ) -> float:
@@ -75,30 +76,48 @@ def get_jaccard_at_k(
     return len(intersection) / len(union)
 
 
-def get_drugrec_metrics(
+def _get_evidence_mrr(result: GNNRecResult) -> float:
+    """计算证据排序结果的首个命中倒数排名。"""
+    for ranked_evidence in result["ranked_evidences"]:
+        if ranked_evidence["label"] == 1:
+            return 1.0 / ranked_evidence["rank"]
+    return 0.0
+
+
+def _get_evidence_hit_at_5(result: GNNRecResult) -> float:
+    """计算前五条证据是否命中正例。"""
+    return 1.0 if any(
+        ranked_evidence["label"] == 1
+        for ranked_evidence in result["ranked_evidences"][:5]
+    ) else 0.0
+
+
+def get_gnn_metrics(
     case: DrugRecCase,
-    result: DrugRecResult,
-) -> DrugRecMetrics:
-    """根据通用推荐结果计算正式离线指标。"""
+    result: GNNRecResult,
+) -> GNNMetrics:
+    """根据主模型结果计算药物与证据指标。"""
     gold_drugids = set(case["gold_drugids"])
-    ranked_drugids = get_ranked_drugids(result)
-    top_5_drugids = get_ranked_drugids(result, top_k=5)
-    precision_at_5 = get_precision_at_k(gold_drugids, top_5_drugids)
-    recall_at_5 = get_recall_at_k(gold_drugids, top_5_drugids)
+    ranked_drugids = _get_ranked_drugids(result)
+    top_5_drugids = _get_ranked_drugids(result, top_k=5)
+    precision_at_5 = _get_precision_at_k(gold_drugids, top_5_drugids)
+    recall_at_5 = _get_recall_at_k(gold_drugids, top_5_drugids)
     return {
-        "hit": get_hit(gold_drugids, ranked_drugids),
-        "mrr": get_mrr(gold_drugids, ranked_drugids),
+        "hit": _get_hit(gold_drugids, ranked_drugids),
+        "mrr": _get_mrr(gold_drugids, ranked_drugids),
         "precision_at_5": precision_at_5,
         "recall_at_5": recall_at_5,
-        "f1_at_5": get_f1(precision_at_5, recall_at_5),
-        "jaccard_at_5": get_jaccard_at_k(gold_drugids, top_5_drugids),
+        "f1_at_5": _get_f1(precision_at_5, recall_at_5),
+        "jaccard_at_5": _get_jaccard_at_k(gold_drugids, top_5_drugids),
+        "evidence_mrr": _get_evidence_mrr(result),
+        "evidence_hit_at_5": _get_evidence_hit_at_5(result),
     }
 
 
-def aggregate_drugrec_metrics(
-    metrics_list: Sequence[DrugRecMetrics],
-) -> DrugRecMetrics:
-    """对一组病例的通用推荐指标取平均。"""
+def aggregate_gnn_metrics(
+    metrics_list: Sequence[GNNMetrics],
+) -> GNNMetrics:
+    """对一组病例的全部 GNN 指标取平均。"""
     if not metrics_list:
         return {}
     metric_keys = sorted(
@@ -108,11 +127,20 @@ def aggregate_drugrec_metrics(
             for metric_key in metrics
         }
     )
-    return {
-        metric_key: sum(
-            metrics[metric_key]
-            for metrics in metrics_list
-            if metric_key in metrics
-        ) / len(metrics_list)
-        for metric_key in metric_keys
-    }
+    return cast(
+        GNNMetrics,
+        {
+            metric_key: sum(
+                metrics[metric_key]
+                for metrics in metrics_list
+                if metric_key in metrics
+            ) / len(metrics_list)
+            for metric_key in metric_keys
+        },
+    )
+
+
+__all__ = [
+    "aggregate_gnn_metrics",
+    "get_gnn_metrics",
+]

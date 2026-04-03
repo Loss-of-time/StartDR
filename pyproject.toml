@@ -17,6 +17,7 @@ dependencies = [
     "rich",
     "torch",
     "transformers",
+    "viztracer>=1.1.1",
 ]
 
 [tool.uv.sources]

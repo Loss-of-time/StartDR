@@ -141,7 +141,7 @@ GNN 中间文件构建入口。
 
 - 默认输入：`resource/patient_candidate/pyserini_bm25_top50/{split}.jsonl`
 - 默认输出：`resource/gnn_data/pyserini_bm25_top50/{split}/`
-- 当前流程：读取冻结候选集，按 slot 顺序构建 `case + graph_sample`，并写出 `slot_*.pkl + meta.json`
+- 当前流程：读取冻结候选集，构建 `case + model_input`，并写出 `samples.pkl + meta.json`
 
 ### `src/drcore/retriever_eval.py`
 
@@ -157,8 +157,7 @@ GNN 中间文件构建入口。
 
 当前包含：
 
-- `drugrec_model.py`：统一训练 / 评测接口
-- `gnn/`：当前唯一可用的 `gnn` 模型实现
+- `gnn/`：当前主模型实现，直接采用 `TraceDR` 风格输入，使用 `hfl/chinese-roberta-wwm-ext` 编码患者、证据、实体文本，并在 `entity <-> evidence` 二部图上做患者条件消息传递
 
 ### `src/drcore/model_train.py`
 
@@ -167,7 +166,7 @@ GNN 中间文件构建入口。
 - 默认训练输入：`resource/gnn_data/pyserini_bm25_top50/train/`
 - 默认验证输入：`resource/gnn_data/pyserini_bm25_top50/dev/`
 - 默认输出目录：`output/model/`
-- 当前仅支持 `gnn` 模型，训练阶段只读取预先构建好的 slot 化 GNN 中间目录
+- 当前直接训练主模型 `gnn`，不再经过旧的模型注册表与统一抽象接口
 
 ### `src/drcore/metrics/retrieval.py`
 
@@ -181,7 +180,7 @@ GNN 中间文件构建入口。
 集中定义 `TypedDict` 与相关类型别名，当前包含：
 
 - `drugrec.py`：患者样本与统一药品字段
-- `drugrec_task.py`：训练任务结果结构与 GNN 局部图结构
+- `drugrec_task.py`：`TraceDR` 风格主模型的输入、训练样本与评测结果结构
 - `kg.py`：检索阶段共享的辅助类型
 - `metrics.py`：离线评测报告结构
 - `retriever.py`：检索器协议与候选结构
@@ -249,6 +248,7 @@ uv sync
 - 当前代码默认认证 `neo4j / password`
 - `resource/DrugRec.jsonl` 或切分数据
 - 当前 `pyproject.toml` 已固定 Windows 环境下的 `torch cu126` 源，`uv sync` 会安装 CUDA 版 `torch`
+- 当前 `gnn` 默认会在首次构建模型时从 HuggingFace 拉取 `hfl/chinese-roberta-wwm-ext`
 
 示例命令：
 
@@ -265,15 +265,17 @@ uv run retriver-eval --retriver dense --top-k 50 --output-name dense_test_k50
 ```
 
 `uv run patient-candidates` 当前默认使用 `pyserini_bm25` 生成 `top50` 候选集，并写入 `resource/patient_candidate/<retriver>_top50/{split}.jsonl`。
-`uv run gnn-data` 会从冻结候选集构建 `resource/gnn_data/<retriver>_top50/{split}/`，目录内包含 `slot_*.pkl` 和 `meta.json`。
-`uv run model-train` 会从该中间目录读取训练样本，并把 checkpoint 与训练报告写入 `output/model/`。
+`uv run gnn-data` 会从冻结候选集构建 `resource/gnn_data/<retriver>_top50/{split}/`，目录内包含 `samples.pkl` 和 `meta.json`。
+`uv run model-train` 会从该中间目录读取 `TraceDR` 风格 `model_input`，并把 checkpoint 与训练报告写入 `output/model/`。
 
 ## 当前状态
 
 截至 `2026-04-03`，当前可确认的能力边界是：
 
 - 已有患者读取、Neo4j 查询、BM25 召回、Pyserini BM25 召回、Dense 召回、离线评测这条最短实验链路
-- 已补齐冻结候选集上的 `gnn` 药品推荐训练入口，当前 `DrugRecModelName` 只声明并注册 `gnn`
+- 已补齐冻结候选集上的 `gnn` 药品推荐训练入口
+- 当前 `gnn` 已切换为主模型级别的 `TraceDR` 风格图模型，不再是仅消费候选药数值特征的 MLP
+- 当前主训练链路直接训练 `TraceDR` 风格主模型，不再保留旧的 `DrugRecModel` 兼容层
 - `DrugRec.jsonl`、KG 全量药品详情与冻结候选集中的 `ingredients` / `interaction` 字段现已统一为单一命名，不再保留别名
 - 文档、数据、缓存、输出目录以本地实验资源为主，不按仓库源码管理
 - 检索注册表当前仅暴露 `bm25`、`pyserini_bm25` 和 `dense` 三个可实际运行的检索器

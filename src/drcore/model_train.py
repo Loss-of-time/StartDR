@@ -8,18 +8,15 @@ from typing import TypedDict, cast
 import torch
 from rich.progress import Progress
 
-from .metrics.drugrec import aggregate_drugrec_metrics, get_drugrec_metrics
-from .metrics.gnn_drugrec import aggregate_gnn_metrics, get_gnn_metrics
-from .model.drugrec_model import DrugRecModel
+from .metrics.gnn import aggregate_gnn_metrics, get_gnn_metrics
 from .model.gnn.intermediate import load_train_samples
 from .model.gnn.model import GNNModel
 from .schema.drugrec_task import (
-    DrugRecCheckpoint,
-    DrugRecMetrics,
-    DrugRecModelName,
-    DrugRecResult,
-    DrugRecTrainSample,
+    GNNMetrics,
     GNNRecResult,
+    GNNTrainSample,
+    RankedDrug,
+    RankedEvidence,
 )
 from .utils.log import get_console, setup_logging
 from .utils.paths import OUTPUT_DIR, RESOURCE_DIR
@@ -31,11 +28,7 @@ DEFAULT_DEV_INPUT = (
     RESOURCE_DIR / "gnn_data" / "pyserini_bm25_top50" / "dev"
 )
 DEFAULT_OUTPUT_DIR = OUTPUT_DIR / "model"
-DEFAULT_TOP_K = 50
 LOGGER = logging.getLogger(__name__)
-MODEL_REGISTRY: dict[DrugRecModelName, type[DrugRecModel]] = {
-    "gnn": GNNModel,
-}
 
 
 class TrainEpochResult(TypedDict, total=False):
@@ -47,69 +40,37 @@ class TrainEpochResult(TypedDict, total=False):
     recall_at_5: float
     f1_at_5: float
     jaccard_at_5: float
-    ddi_rate_at_5: float
     evidence_mrr: float
     evidence_hit_at_5: float
 
 
-class TrainReportConfig(TypedDict):
-    model: DrugRecModelName
-    train_input: str
-    dev_input: str
-    train_case_count: int
-    dev_case_count: int
-    epochs: int
-    batch_size: int
-    learning_rate: float
-    top_k: int
-    seed: int
-    device: str
-    selection_metric: str
-
-
 class TrainReport(TypedDict):
-    config: TrainReportConfig
     best_epoch: int
     best_metric_value: float
     checkpoint_path: str
     epochs: list[TrainEpochResult]
 
 
-def get_model_names() -> list[DrugRecModelName]:
-    """返回当前可训练的推荐模型名称。"""
-    return list(MODEL_REGISTRY)
-
-
-def build_model(
-    name: DrugRecModelName,
-    train_samples: list[DrugRecTrainSample],
-    top_k: int,
-) -> DrugRecModel:
-    """根据名称构建训练态推荐模型。"""
-    return MODEL_REGISTRY[name].build_for_train(
-        train_samples=train_samples,
-        top_k=top_k,
-    )
-
-
 def parse_args() -> argparse.Namespace:
-    """解析推荐模型训练命令行参数。"""
+    """解析当前主模型训练参数。"""
     parser = argparse.ArgumentParser(
-        description="训练药品推荐模型。",
-    )
-    parser.add_argument(
-        "--model",
-        type=str,
-        choices=get_model_names(),
-        default="gnn",
+        description="训练 TraceDR 风格主模型。",
     )
     parser.add_argument("--train-input", type=Path, default=DEFAULT_TRAIN_INPUT)
     parser.add_argument("--dev-input", type=Path, default=DEFAULT_DEV_INPUT)
     parser.add_argument("--output-name", type=str, required=True)
     parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--learning-rate", type=float, default=1e-3)
-    parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
+    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--learning-rate", type=float, default=1e-5)
+    parser.add_argument("--hidden-size", type=int, default=768)
+    parser.add_argument(
+        "--encoder-model-name",
+        type=str,
+        default="hfl/chinese-roberta-wwm-ext",
+    )
+    parser.add_argument("--max-text-length", type=int, default=256)
+    parser.add_argument("--message-passing-steps", type=int, default=3)
+    parser.add_argument("--dropout", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--train-limit", type=int, default=None)
     parser.add_argument("--dev-limit", type=int, default=None)
@@ -122,51 +83,90 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def iter_batches(
-    samples: list[DrugRecTrainSample],
-    batch_size: int,
-) -> list[list[DrugRecTrainSample]]:
-    """按固定 batch size 切分训练样本列表。"""
+def iter_batches[T](items: list[T], batch_size: int) -> list[list[T]]:
+    """按固定 batch size 切分列表。"""
     return [
-        samples[index:index + batch_size]
-        for index in range(0, len(samples), batch_size)
+        items[index:index + batch_size]
+        for index in range(0, len(items), batch_size)
     ]
 
 
 def evaluate_model(
-    model: DrugRecModel,
-    samples: list[DrugRecTrainSample],
+    model: GNNModel,
+    samples: list[GNNTrainSample],
     batch_size: int,
-) -> tuple[DrugRecMetrics, list[DrugRecResult]]:
-    """执行一轮开发集评测并聚合正式指标。"""
-    results: list[DrugRecResult] = []
+) -> GNNMetrics:
+    """执行一轮开发集评测并聚合指标。"""
+    metrics_list: list[GNNMetrics] = []
     with torch.no_grad():
         for batch_samples in iter_batches(samples, batch_size):
-            output = model.eval_step(batch_samples)
-            results.extend(output["results"])
-    cases = [sample["case"] for sample in samples]
-    base_metrics = aggregate_drugrec_metrics(
-        [
-            get_drugrec_metrics(case, result)
-            for case, result in zip(cases, results, strict=True)
-        ]
-    )
-    if model.result_kind != "gnn":
-        return base_metrics, results
-    gnn_metrics = aggregate_gnn_metrics(
-        [
-            get_gnn_metrics(case, cast(GNNRecResult, result))
-            for case, result in zip(cases, results, strict=True)
-        ]
-    )
-    return {
-        **base_metrics,
-        **gnn_metrics,
-    }, results
+            batch_inputs = [sample["model_input"] for sample in batch_samples]
+            outputs = model(batch_inputs)
+            for sample, (entity_logits, evidence_logits) in zip(
+                batch_samples,
+                outputs,
+                strict=True,
+            ):
+                entity_scores = torch.sigmoid(entity_logits).detach().cpu().tolist()
+                evidence_scores = torch.sigmoid(
+                    evidence_logits
+                ).detach().cpu().tolist()
+                ranked_drugs: list[RankedDrug] = [
+                    {
+                        "drugid": candidate["drugid"],
+                        "score": float(entity_scores[entity_index]),
+                        "rank": 0,
+                        "drug": candidate["drug"],
+                        "retrieval_score": candidate["score"],
+                        "retrieval_rank": candidate["rank"],
+                        "label": 1 if candidate["is_gold"] else 0,
+                    }
+                    for candidate, entity_index in zip(
+                        sample["case"]["candidate_drugs"],
+                        sample["model_input"]["candidate_entity_indices"],
+                        strict=True,
+                    )
+                ]
+                ranked_drugs.sort(key=lambda item: item["score"], reverse=True)
+                for rank, ranked_drug in enumerate(ranked_drugs, start=1):
+                    ranked_drug["rank"] = rank
+                ranked_evidences: list[RankedEvidence] = [
+                    {
+                        "evidence_id": evidence["evidence_id"],
+                        "score": float(score),
+                        "rank": 0,
+                        "text": evidence["text"],
+                        "label": evidence["label"],
+                    }
+                    for evidence, score in zip(
+                        sample["model_input"]["evidences"],
+                        evidence_scores,
+                        strict=True,
+                    )
+                ]
+                ranked_evidences.sort(
+                    key=lambda item: item["score"],
+                    reverse=True,
+                )
+                for rank, ranked_evidence in enumerate(
+                    ranked_evidences,
+                    start=1,
+                ):
+                    ranked_evidence["rank"] = rank
+                result: GNNRecResult = {
+                    "patient_id": sample["case"]["patient_id"],
+                    "split": sample["case"]["split"],
+                    "ranked_drugs": ranked_drugs,
+                    "ranked_evidences": ranked_evidences,
+                }
+                metrics_list.append(
+                    get_gnn_metrics(sample["case"], result)
+                )
+    return cast(GNNMetrics, aggregate_gnn_metrics(metrics_list))
 
 
 def main() -> None:
-    """执行推荐模型训练主流程。"""
+    """执行主模型训练。"""
     args = parse_args()
     log_path = setup_logging()
     LOGGER.info("日志文件: %s", log_path.resolve())
@@ -186,16 +186,15 @@ def main() -> None:
         else torch.device("cpu") if args.device == "auto"
         else torch.device(args.device)
     )
-
     random_state = random.Random(args.seed)
-
-    model_name: DrugRecModelName = cast(DrugRecModelName, args.model)
-    model = build_model(
-        name=model_name,
-        train_samples=train_samples,
-        top_k=args.top_k,
+    model = GNNModel(
+        hidden_size=args.hidden_size,
+        encoder_model_name=args.encoder_model_name,
+        max_text_length=args.max_text_length,
+        message_passing_steps=args.message_passing_steps,
+        dropout=args.dropout,
     ).to(device)
-    optimizer = torch.optim.Adam(
+    optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=args.learning_rate,
     )
@@ -203,68 +202,53 @@ def main() -> None:
     DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     checkpoint_path = DEFAULT_OUTPUT_DIR / f"{args.output_name}.pt"
     report_path = DEFAULT_OUTPUT_DIR / f"{args.output_name}.json"
-
     epoch_results: list[TrainEpochResult] = []
     best_epoch = 1
     best_metric_value = -1.0
 
     with Progress(console=get_console()) as progress:
-        task_id = progress.add_task("训练模型", total=args.epochs)
+        task_id = progress.add_task("训练主模型", total=args.epochs)
         for epoch in range(1, args.epochs + 1):
             epoch_samples = list(train_samples)
             random_state.shuffle(epoch_samples)
             batch_losses: list[float] = []
-
             for batch_samples in iter_batches(epoch_samples, args.batch_size):
+                model.train()
                 optimizer.zero_grad()
-                output = model.train_step(batch_samples)
-                output["loss"].backward()
+                batch_inputs = [sample["model_input"] for sample in batch_samples]
+                outputs = model(batch_inputs)
+                loss = model.get_loss(batch_inputs, outputs)
+                loss.backward()
                 optimizer.step()
-                batch_losses.append(output["loss_value"])
-
+                batch_losses.append(float(loss.detach().item()))
             train_loss = sum(batch_losses) / len(batch_losses)
             model.eval()
-            dev_metrics, _ = evaluate_model(model, dev_samples, args.batch_size)
-            epoch_result = cast(
-                TrainEpochResult,
-                {
-                    "epoch": epoch,
-                    "train_loss": train_loss,
-                    **dev_metrics,
-                },
+            dev_metrics = evaluate_model(
+                model,
+                dev_samples,
+                args.batch_size,
             )
+            dev_mrr = dev_metrics.get("mrr", 0.0)
+            epoch_result: TrainEpochResult = {
+                "epoch": epoch,
+                "train_loss": train_loss,
+                **dev_metrics,
+            }
             epoch_results.append(epoch_result)
             LOGGER.info(
-                "epoch=%s train_loss=%.6f selection_metric=%s selection_value=%.4f",
+                "epoch=%s train_loss=%.6f selection_metric=mrr selection_value=%.4f",
                 epoch,
                 train_loss,
-                model.selection_metric,
-                dev_metrics[model.selection_metric],
+                dev_mrr,
             )
-
-            if dev_metrics[model.selection_metric] > best_metric_value:
+            if dev_mrr > best_metric_value:
                 best_epoch = epoch
-                best_metric_value = dev_metrics[model.selection_metric]
-                checkpoint: DrugRecCheckpoint = model.build_checkpoint()
-                torch.save(checkpoint, checkpoint_path)
+                best_metric_value = dev_mrr
+                torch.save(model.build_checkpoint(), checkpoint_path)
                 LOGGER.info("已更新最佳 checkpoint: %s", checkpoint_path.resolve())
             progress.advance(task_id)
 
     report: TrainReport = {
-        "config": {
-            "model": model_name,
-            "train_input": str(args.train_input.resolve()),
-            "dev_input": str(args.dev_input.resolve()),
-            "train_case_count": len(train_samples),
-            "dev_case_count": len(dev_samples),
-            "epochs": args.epochs,
-            "batch_size": args.batch_size,
-            "learning_rate": args.learning_rate,
-            "top_k": args.top_k,
-            "seed": args.seed,
-            "device": str(device),
-            "selection_metric": model.selection_metric,
-        },
         "best_epoch": best_epoch,
         "best_metric_value": best_metric_value,
         "checkpoint_path": str(checkpoint_path.resolve()),

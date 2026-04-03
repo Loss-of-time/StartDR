@@ -10,10 +10,10 @@ from ...metrics.gnn_drugrec import aggregate_gnn_metrics, get_gnn_metrics
 from ...schema.drugrec_task import (
     DrugRecCase,
     DrugRecCheckpoint,
-    GNNEdge,
-    GNNGraphSample,
     DrugRecMetrics,
     EvalStepOutput,
+    GNNEdge,
+    GNNGraphSample,
     GNNNodeScore,
     GNNRecResult,
     ModelStateDict,
@@ -27,6 +27,30 @@ from .data_set import (
     GNNGraphSampleBuilder,
     fit_numeric_feature_stats,
 )
+
+
+class GNNGraphSampleCache:
+    """按病例对象缓存图样本，避免训练期重复构图。"""
+
+    def __init__(self) -> None:
+        """初始化空缓存。"""
+        self.graph_sample_by_case_id: dict[int, GNNGraphSample] = {}
+
+    def get(self, case: DrugRecCase) -> GNNGraphSample:
+        """获取单个病例图样本，未命中时即时构建。"""
+        case_id = id(case)
+        graph_sample = self.graph_sample_by_case_id.get(case_id)
+        if graph_sample is None:
+            graph_sample = GNNGraphSampleBuilder(case).build()
+            self.graph_sample_by_case_id[case_id] = graph_sample
+        return graph_sample
+
+    def get_many(
+        self,
+        cases: list[DrugRecCase],
+    ) -> list[GNNGraphSample]:
+        """按病例顺序返回图样本列表。"""
+        return [self.get(case) for case in cases]
 
 
 class GNNModel(GNNRecModel):
@@ -65,6 +89,7 @@ class GNNModel(GNNRecModel):
             nn.Linear(hidden_size, 1),
         )
         self.loss_fn = nn.BCEWithLogitsLoss()
+        self.graph_sample_cache = GNNGraphSampleCache()
 
     def forward(
         self,
@@ -108,7 +133,7 @@ class GNNModel(GNNRecModel):
 
     def predict(self, case: DrugRecCase) -> GNNRecResult:
         """对单个病例输出药物排序结果。"""
-        graph_sample = GNNGraphSampleBuilder(case).build()
+        graph_sample = self.graph_sample_cache.get(case)
         was_training = self.training
         self.eval()
         with torch.no_grad():
@@ -123,9 +148,7 @@ class GNNModel(GNNRecModel):
     ) -> TrainStepOutput:
         """执行一次训练步并返回训练损失。"""
         self.train()
-        graph_samples = [
-            GNNGraphSampleBuilder(case).build() for case in cases
-        ]
+        graph_samples = self.graph_sample_cache.get_many(cases)
         logits_list = self.forward(graph_samples)
         loss_terms = [
             self.loss_fn(
@@ -179,9 +202,7 @@ class GNNModel(GNNRecModel):
         cases: list[DrugRecCase],
     ) -> EvalStepOutput:
         """执行一次评测步并返回批量排序结果。"""
-        graph_samples = [
-            GNNGraphSampleBuilder(case).build() for case in cases
-        ]
+        graph_samples = self.graph_sample_cache.get_many(cases)
         was_training = self.training
         self.eval()
         with torch.no_grad():

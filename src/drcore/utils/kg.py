@@ -41,19 +41,3 @@ def list_full_drug_details() -> list[DrugRecMedicine]:
                 ),
             )
         return details
-
-
-def _build_drug_detail_map() -> dict[str, DrugRecMedicine]:
-    return {
-        detail["drugid"]: detail
-        for detail in list_full_drug_details()
-    }
-
-
-def _get_drug_detail_map_singleton() -> dict[str, DrugRecMedicine]:
-    global _DRUG_DETAIL_MAP
-
-    if _DRUG_DETAIL_MAP is None:
-        _DRUG_DETAIL_MAP = _build_drug_detail_map()
-
-    return _DRUG_DETAIL_MAP

@@ -1,9 +1,7 @@
 # 思路：获取所有药物的治疗文本，组合成一条检索语料，再把病人症状组合成查询。
 import logging
-from typing import cast
-
-# from ..schema impo
 import warnings
+from typing import cast
 
 import jieba
 from rank_bm25 import BM25Okapi
@@ -84,7 +82,7 @@ class BM25Retriver(Retriver):
             drug["drugid"]: drug["name"] or "None"
             for drug in source_drugs
         }
-        self.corpus, self.drug_ids = get_corpus(source_drugs) # 构成药品查询的数据库
+        self.corpus, self.drug_ids = get_corpus(source_drugs)
         self.bm25 = BM25Okapi(self.corpus)
 
     def retrieve(
@@ -93,7 +91,7 @@ class BM25Retriver(Retriver):
         top_k: int = 10,
     ) -> list[RetrievedDrugCandidate]:
         query = get_query(patient)
-        scores = self.bm25.get_scores(query) # 核心
+        scores = self.bm25.get_scores(query)
         limit = min(top_k, len(self.drug_ids))
         top_indices = scores.argpartition(-limit)[-limit:]
         ranked_indices = top_indices[scores[top_indices].argsort()[::-1]]

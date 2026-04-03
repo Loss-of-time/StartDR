@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, TypedDict
 
@@ -31,11 +32,11 @@ class NumericFeatureStats(TypedDict):
     score_log_std: float
 
 
-@dataclass(slots=True) # TODO slots = True 又是什么
+@dataclass(slots=True)
 class GNNNode:
     node_id: NodeId
     node_type: GNNNodeType
-    text: str # 暂时无用
+    text: str
 
 
 @dataclass(slots=True)
@@ -68,9 +69,7 @@ class GNNGraphSample:
     gold_drugids: list[DrugId]
     nodes: list[GNNNode]
     edges: list[GNNEdge]
-    # key 固定为 drug 节点的 node_id，格式为 drug:{drugid}
-    drug_numeric_features: dict[NodeId, DrugNodeNumericFeature]
-    # 顺序固定对齐 candidate_drugs 原始顺序
+    drug_numeric_features: Mapping[NodeId, DrugNodeNumericFeature]
     candidate_targets: list[GNNCandidateTarget]
 
 

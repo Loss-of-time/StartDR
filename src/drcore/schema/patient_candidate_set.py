@@ -1,4 +1,4 @@
-from typing import Literal, TypeAlias, TypedDict
+from typing import Literal, TypedDict
 
 from .drugrec import DatasetSplit, DrugRecMedicine, DrugRecRecord
 
@@ -9,9 +9,9 @@ from .drugrec import DatasetSplit, DrugRecMedicine, DrugRecRecord
 - 目标是让后续 TraceDR 主线与各类 baseline 在脱离 Neo4j 的情况下复现实验输入
 """
 
-NullableScore: TypeAlias = float | None
-PatientCandidateRetriever: TypeAlias = Literal["bm25", "pyserini_bm25"]
-PatientCandidateTopK: TypeAlias = Literal[50]
+type NullableScore = float | None
+type PatientCandidateRetriever = Literal["bm25", "pyserini_bm25"]
+type PatientCandidateTopK = Literal[50]
 
 
 class CandidateDrug(TypedDict):
@@ -24,7 +24,7 @@ class CandidateDrug(TypedDict):
 
 class PatientCandidateSet(TypedDict):
     patient_id: str
-    split: DatasetSplit # 属于哪个划分集合
+    split: DatasetSplit
     retriever: PatientCandidateRetriever
     top_k: PatientCandidateTopK
     retrieval_query: str

@@ -30,6 +30,7 @@ url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [project.scripts]
+model-train = "drcore.model_train:main"
 patient-candidates = "drcore.patient_candidates:main"
 retrieval-bm25 = "drcore.retrieval.bm25:main"
 retrieval-dense = "drcore.retrieval.dense:main"

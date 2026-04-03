@@ -1,5 +1,4 @@
-
-from typing import Literal, NotRequired, TypeAlias, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 """
 ``resource/DrugRec.jsonl`` 规范化结构的 ``TypedDict`` 定义。
@@ -18,10 +17,10 @@ from typing import Literal, NotRequired, TypeAlias, TypedDict
 - 除以上两点外，其余字段尽量保持原始结构不变
 """
 
-DatasetSplit: TypeAlias = Literal["train", "dev", "test"]
-NullableString: TypeAlias = str | None
-NullableInteger: TypeAlias = int | None
-NullableCMAN: TypeAlias = str | None
+type DatasetSplit = Literal["train", "dev", "test"]
+type NullableString = str | None
+type NullableInteger = int | None
+type NullableCMAN = str | None
 
 
 class DrugCaution(TypedDict):

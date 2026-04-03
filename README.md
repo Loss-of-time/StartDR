@@ -9,6 +9,7 @@ StartDR 是当前重新整理的毕业设计实验目录，目标是用尽量短
 - 读取 `DrugRec` 患者样本
 - 从 Neo4j 导出药品文本语料
 - 运行 `bm25`、`pyserini_bm25` 与 `dense` 三类召回实验
+- 在冻结候选集上训练当前可用的 `gnn` 药品推荐模型
 - 输出离线评测结果，给后续主线整理提供依据
 
 当前仓库采用 `uv + src` 布局：
@@ -34,9 +35,11 @@ StartDR/
 │     ├─ constant/
 │     ├─ data/
 │     ├─ metrics/
+│     ├─ model/
 │     ├─ retrieval/
 │     ├─ schema/
 │     ├─ utils/
+│     ├─ model_train.py
 │     ├─ patient_candidates.py
 │     └─ retriever_eval.py
 ├─ .vscode/
@@ -142,6 +145,25 @@ StartDR/
 - 默认输出：`output/retriver/`
 - 当前流程：读取患者样本，调用检索器接口，聚合 `hit / recall / mrr` 并写出 JSON 报告
 
+### `src/drcore/model/`
+
+药品推荐模型目录。
+
+当前包含：
+
+- `drugrec_model.py`：统一训练 / 评测接口
+- `registry.py`：模型注册入口
+- `gnn_reranker/`：当前唯一可用的 `gnn` 模型实现
+
+### `src/drcore/model_train.py`
+
+药品推荐模型训练入口。
+
+- 默认训练输入：`resource/patient_candidate/pyserini_bm25_top50/train.jsonl`
+- 默认验证输入：`resource/patient_candidate/pyserini_bm25_top50/dev.jsonl`
+- 默认输出目录：`output/model/`
+- 当前仅支持 `gnn` 模型
+
 ### `src/drcore/metrics/retrieval.py`
 
 检索阶段纯指标函数目录。
@@ -228,18 +250,21 @@ uv run retrieval-bm25
 uv run retrieval-dense
 uv run python resource/split.py --train 0.6 --test 0.2 --dev 0.2 --output-dir resource/DrugRec0330
 uv run patient-candidates --input-dir resource/DrugRec0330 --split test
+uv run model-train --output-name gnn_pyserini_top50 --epochs 5
 uv run retriver-eval --retriver bm25 --top-k 10 --output-name bm25_test_k10
 uv run retriver-eval --retriver pyserini_bm25 --top-k 50 --output-name pyserini_bm25_test_k50
 uv run retriver-eval --retriver dense --top-k 50 --output-name dense_test_k50
 ```
 
 `uv run patient-candidates` 当前默认使用 `pyserini_bm25` 生成 `top50` 候选集，并写入 `resource/patient_candidate/<retriver>_top50/{split}.jsonl`。
+`uv run model-train` 会从同一路径读取冻结候选集，并把 checkpoint 与训练报告写入 `output/model/`。
 
 ## 当前状态
 
 截至 `2026-04-03`，当前可确认的能力边界是：
 
 - 已有患者读取、Neo4j 查询、BM25 召回、Pyserini BM25 召回、Dense 召回、离线评测这条最短实验链路
+- 已补齐冻结候选集上的 `gnn` 药品推荐训练入口，当前 `DrugRecModelName` 只声明并注册 `gnn`
 - `DrugRec.jsonl`、KG 全量药品详情与冻结候选集中的 `ingredients` / `interaction` 字段现已统一为单一命名，不再保留别名
 - 文档、数据、缓存、输出目录以本地实验资源为主，不按仓库源码管理
 - 检索注册表当前仅暴露 `bm25`、`pyserini_bm25` 和 `dense` 三个可实际运行的检索器

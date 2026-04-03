@@ -15,13 +15,13 @@ from transformers import (
 )
 
 from ..constant import CACHE_DIR
-from ..kg import list_full_drug_details
 from ..schema import (
     DrugRecMedicine,
     DrugRecRecord,
     RetrievedDrugCandidate,
     Retriver,
 )
+from ..utils.kg import list_full_drug_details
 from ..utils.log import get_console, setup_logging
 
 LOGGER = logging.getLogger(__name__)

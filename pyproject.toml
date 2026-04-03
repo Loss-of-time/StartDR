@@ -30,12 +30,17 @@ url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [project.scripts]
-input-process = "drcore.input_process:main"
-kg-export = "drcore.kg:main"
 patient-candidates = "drcore.patient_candidates:main"
 retrieval-bm25 = "drcore.retrieval.bm25:main"
 retrieval-dense = "drcore.retrieval.dense:main"
-retriver-eval = "drcore.metrics.retriver:main"
+retriver-eval = "drcore.retriever_eval:main"
+
+[tool.ruff]
+line-length = 80
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501", "F821", "F722", "UP037"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/drcore"]

@@ -5,7 +5,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.logging import RichHandler
 
-from ..paths import OUTPUT_DIR, PACKAGE_DIR
+from .paths import OUTPUT_DIR, PACKAGE_DIR
 
 LOG_DIR = OUTPUT_DIR / "log"
 ROOT_LOGGER_NAME = PACKAGE_DIR.name

@@ -37,7 +37,8 @@ StartDR/
 │     ├─ retrieval/
 │     ├─ schema/
 │     ├─ utils/
-│     └─ patient_candidates.py
+│     ├─ patient_candidates.py
+│     └─ retriever_eval.py
 ├─ .vscode/
 ├─ pyproject.toml
 └─ README.md
@@ -135,6 +136,21 @@ StartDR/
 - 默认输出：`resource/patient_candidate/<retriver>_top50/{split}.jsonl`
 - 当前流程：读取患者样本，调用检索器，补全药品详情并写出冻结候选集
 
+### `src/drcore/retriever_eval.py`
+
+离线检索评测入口。
+
+- 默认输入：`resource/DrugRec0328/test.jsonl`
+- 默认输出：`output/retriver/`
+- 当前流程：读取患者样本，调用检索器接口，聚合 `hit / recall / mrr` 并写出 JSON 报告
+
+### `src/drcore/metrics/retrieval.py`
+
+检索阶段纯指标函数目录。
+
+- 当前提供：`hit`、`recall`、`mrr`、聚合函数与失败样本统计
+- 不包含 CLI、文件读写或检索器构造逻辑
+
 ### `src/drcore/schema/`
 
 集中定义 `TypedDict` 与相关类型别名，当前包含：
@@ -214,6 +230,9 @@ uv run retrieval-bm25
 uv run retrieval-dense
 uv run python resource/split.py --train 0.6 --test 0.2 --dev 0.2 --output-dir resource/DrugRec0330
 uv run patient-candidates --input-dir resource/DrugRec0330 --split test
+uv run retriver-eval --retriver bm25 --top-k 10 --output-name bm25_test_k10
+uv run retriver-eval --retriver pyserini_bm25 --top-k 50 --output-name pyserini_bm25_test_k50
+uv run retriver-eval --retriver dense --top-k 50 --output-name dense_test_k50
 ```
 
 `uv run patient-candidates` 当前默认使用 `pyserini_bm25` 生成 `top50` 候选集，并写入 `resource/patient_candidate/<retriver>_top50/{split}.jsonl`。

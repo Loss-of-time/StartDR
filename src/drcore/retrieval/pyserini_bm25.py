@@ -4,17 +4,17 @@ from pathlib import Path
 from pyserini.index.lucene import LuceneIndexer
 from pyserini.search.lucene import LuceneSearcher
 
-from ..kg import list_full_drug_details
-from ..paths import DATA_DIR
 from ..schema import (
     DrugRecMedicine,
     DrugRecRecord,
     RetrievedDrugCandidate,
     Retriver,
 )
+from ..utils.kg import list_full_drug_details
+from ..utils.paths import RESOURCE_DIR
 
 LOGGER = logging.getLogger(__name__)
-INDEX_DIR = DATA_DIR / "cache" / "pyserini_bm25_zh"
+INDEX_DIR = RESOURCE_DIR / "cache" / "pyserini_bm25_zh"
 
 
 def build_document(drug: DrugRecMedicine) -> str:

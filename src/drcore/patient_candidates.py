@@ -1,13 +1,11 @@
 import argparse
-import json
 import logging
 from pathlib import Path
 
 from rich.progress import Progress
 
-from .input_process import load_jsonl_limit
-from .kg import list_full_drug_details
-from .paths import DATA_DIR
+from .data.drugrec import load_drugrec_records
+from .data.patient_candidate import write_patient_candidate_sets
 from .retrieval import build_retriver
 from .schema import (
     CandidateDrug,
@@ -20,12 +18,14 @@ from .schema import (
     RetrievedDrugCandidate,
     Retriver,
 )
+from .utils.kg import list_full_drug_details
 from .utils.log import get_console, setup_logging
+from .utils.paths import RESOURCE_DIR
 
 DEFAULT_OUTPUT_DIR = (
-    DATA_DIR / "patient_candidate"
+    RESOURCE_DIR / "patient_candidate"
 )
-DEFAULT_INPUT_DIR = DATA_DIR / "DrugRec0328"
+DEFAULT_INPUT_DIR = RESOURCE_DIR / "DrugRec0328"
 DEFAULT_RETRIEVER_NAME: PatientCandidateRetriever = "pyserini_bm25"
 DEFAULT_TOP_K: PatientCandidateTopK = 50
 LOGGER = logging.getLogger(__name__)
@@ -93,23 +93,6 @@ def build_patient_candidate_sets(
             )
             progress.advance(task_id)
     return samples
-
-
-###############################################################
-# 工具函数
-###############################################################
-
-
-def write_patient_candidate_sets(
-    samples: list[PatientCandidateSet],
-    output_path: Path,
-) -> None:
-    """按 jsonl 写出患者候选集样本。"""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as file:
-        for sample in samples:
-            file.write(json.dumps(sample, ensure_ascii=False))
-            file.write("\n")
 
 
 def _get_gold_drugids(patient: DrugRecRecord) -> list[str]:
@@ -206,7 +189,7 @@ def main() -> None:
     log_path = setup_logging()
     LOGGER.info("日志文件: %s", log_path.resolve())
     LOGGER.info("开始读取患者数据: %s", input_path.resolve())
-    patients = load_jsonl_limit(input_path, args.limit)
+    patients = load_drugrec_records(input_path, args.limit)
     LOGGER.info("患者样本数: %s", len(patients))
     LOGGER.info("开始构建检索器: %s", retriever_name)
     retriever = build_retriver(retriever_name)
@@ -221,7 +204,7 @@ def main() -> None:
         retriever=retriever,
         drug_detail_map=drug_detail_map,
     )
-    write_patient_candidate_sets(samples, output_path)
+    write_patient_candidate_sets(output_path, samples)
     LOGGER.info("写出完成: %s", output_path.resolve())
 
 
@@ -229,7 +212,6 @@ __all__ = [
     "build_patient_candidate_set",
     "build_patient_candidate_sets",
     "build_retrieval_query",
-    "write_patient_candidate_sets",
 ]
 
 

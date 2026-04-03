@@ -1,4 +1,4 @@
+from ..utils.paths import RESOURCE_DIR
 from .CYPHER import *  # noqa: F403
-from ..paths import DATA_DIR
 
-CACHE_DIR = DATA_DIR / "cache"
+CACHE_DIR = RESOURCE_DIR / "cache"

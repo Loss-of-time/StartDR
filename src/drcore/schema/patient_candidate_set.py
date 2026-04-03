@@ -3,7 +3,7 @@ from typing import Literal, TypeAlias, TypedDict
 from .drugrec import DatasetSplit, DrugRecMedicine, DrugRecRecord
 
 """
-``data/patient_candidate_sets/`` 中患者候选集样本的 ``TypedDict`` 定义。
+``resource/patient_candidate_sets/`` 中患者候选集样本的 ``TypedDict`` 定义。
 
 - 每条样本保存完整患者信息、金标准药物 ID，以及冻结后的候选药详情
 - 目标是让后续 TraceDR 主线与各类 baseline 在脱离 Neo4j 的情况下复现实验输入

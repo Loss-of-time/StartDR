@@ -2,12 +2,14 @@
 .vscode/
 .venv/
 
+AGENTS.md
+
 docs/
 !docs/.gitkeep
 
-data/
-!data/*.py
-!data/*.md
+resource/
+!resource/*.py
+!resource/*.md
 
 output/
 !output/.gitkeep

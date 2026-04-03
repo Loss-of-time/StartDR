@@ -3,21 +3,18 @@ from functools import wraps
 from inspect import signature
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL, dump, load
-from typing import TypeVar
 
 from ..constant import CACHE_DIR
-from ..paths import PROJECT_DIR
-
-R = TypeVar("R")  # 原函数的返回值类型
+from .paths import PROJECT_DIR
 
 
-def _build_cache_prefix(func: Callable[[], R]) -> str:
+def _build_cache_prefix[R](func: Callable[[], R]) -> str:
     relative_file = Path(func.__code__.co_filename).resolve().relative_to(PROJECT_DIR)
     relative_stem = "__".join(relative_file.with_suffix("").parts)
     return f"{relative_stem}__{func.__name__}"
 
 
-def kg_cache(func: Callable[[], R]) -> Callable[[], R]:
+def kg_cache[R](func: Callable[[], R]) -> Callable[[], R]:
     if signature(func).parameters:
         raise ValueError("kg_cache 只允许装饰无参数函数")
 

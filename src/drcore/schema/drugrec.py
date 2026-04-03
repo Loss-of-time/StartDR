@@ -2,7 +2,7 @@
 from typing import Literal, NotRequired, TypeAlias, TypedDict
 
 """
-``data/DrugRec.jsonl`` 规范化结构的 ``TypedDict`` 定义。
+``resource/DrugRec.jsonl`` 规范化结构的 ``TypedDict`` 定义。
 
 以下约定基于 2026-03-31 的一次全量流式扫描与字段统一结果。
 

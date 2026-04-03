@@ -7,7 +7,6 @@ import warnings
 import jieba
 from rank_bm25 import BM25Okapi
 
-from ..kg import list_full_drug_details
 from ..schema import (
     DrugRecMedicine,
     DrugRecRecord,
@@ -15,6 +14,7 @@ from ..schema import (
     Retriver,
     TokenizedCorpusWithDrugIds,
 )
+from ..utils.kg import list_full_drug_details
 from ..utils.log import setup_logging
 
 # 患者只取 diagnosis symptom
@@ -104,7 +104,7 @@ class BM25Retriver(Retriver):
 
 
 def main() -> None:
-    from ..input_process import get_patients
+    from ..data.drugrec import get_patients
 
     log_path = setup_logging()
     bm25 = BM25Retriver()

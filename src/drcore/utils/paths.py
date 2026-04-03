@@ -1,17 +1,17 @@
 from pathlib import Path
 
-PACKAGE_DIR = Path(__file__).resolve().parent
+PACKAGE_DIR = Path(__file__).resolve().parent.parent
 SRC_DIR = PACKAGE_DIR.parent
 PROJECT_DIR = SRC_DIR.parent
-DATA_DIR = PROJECT_DIR / "data"
+RESOURCE_DIR = PROJECT_DIR / "resource"
 DOCS_DIR = PROJECT_DIR / "docs"
 OUTPUT_DIR = PROJECT_DIR / "output"
 
 __all__ = [
-    "DATA_DIR",
     "DOCS_DIR",
     "OUTPUT_DIR",
     "PACKAGE_DIR",
     "PROJECT_DIR",
+    "RESOURCE_DIR",
     "SRC_DIR",
 ]

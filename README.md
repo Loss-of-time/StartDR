@@ -72,6 +72,7 @@ StartDR/
 当前包含：
 
 - `jsonl.py`：通用 `jsonl` 读写
+- `pkl.py`：通用 `pickle` 读写
 
 ### `src/drcore/utils/kg.py`
 
@@ -134,6 +135,14 @@ StartDR/
 - 默认输出：`resource/patient_candidate/<retriver>_top50/{split}.jsonl`
 - 当前流程：读取患者样本，调用检索器，补全药品详情并写出冻结候选集
 
+### `src/drcore/model/gnn/intermediate.py`
+
+GNN 中间文件构建入口。
+
+- 默认输入：`resource/patient_candidate/pyserini_bm25_top50/{split}.jsonl`
+- 默认输出：`resource/gnn_data/pyserini_bm25_top50/{split}/`
+- 当前流程：读取冻结候选集，按 slot 顺序构建 `case + graph_sample`，并写出 `slot_*.pkl + meta.json`
+
 ### `src/drcore/retriever_eval.py`
 
 离线检索评测入口。
@@ -149,16 +158,16 @@ StartDR/
 当前包含：
 
 - `drugrec_model.py`：统一训练 / 评测接口
-- `gnn_reranker/`：当前唯一可用的 `gnn` 模型实现
+- `gnn/`：当前唯一可用的 `gnn` 模型实现
 
 ### `src/drcore/model_train.py`
 
 药品推荐模型训练入口。
 
-- 默认训练输入：`resource/patient_candidate/pyserini_bm25_top50/train.jsonl`
-- 默认验证输入：`resource/patient_candidate/pyserini_bm25_top50/dev.jsonl`
+- 默认训练输入：`resource/gnn_data/pyserini_bm25_top50/train/`
+- 默认验证输入：`resource/gnn_data/pyserini_bm25_top50/dev/`
 - 默认输出目录：`output/model/`
-- 当前仅支持 `gnn` 模型，模型注册逻辑直接收敛在当前入口文件内
+- 当前仅支持 `gnn` 模型，训练阶段只读取预先构建好的 slot 化 GNN 中间目录
 
 ### `src/drcore/metrics/retrieval.py`
 
@@ -209,6 +218,7 @@ StartDR/
 - `DrugRec0328/`：训练、验证、测试切分结果
 - `DrugRec0330/`：`0.6 / 0.2 / 0.2` 训练、验证、测试切分结果
 - `patient_candidate/`：冻结候选集样本导出目录
+- `gnn_data/`：GNN 训练中间文件目录
 - `cache/`：Neo4j 查询缓存、稠密检索向量缓存
 - `split.py`：数据切分脚本
 - `DrugRec_处理说明.md`：数据处理说明
@@ -247,6 +257,7 @@ uv run retrieval-bm25
 uv run retrieval-dense
 uv run python resource/split.py --train 0.6 --test 0.2 --dev 0.2 --output-dir resource/DrugRec0330
 uv run patient-candidates --input-dir resource/DrugRec0330 --split test
+uv run gnn-data --input-dir resource/patient_candidate/pyserini_bm25_top50 --split train --chunk-size 64
 uv run model-train --output-name gnn_pyserini_top50 --epochs 5
 uv run retriver-eval --retriver bm25 --top-k 10 --output-name bm25_test_k10
 uv run retriver-eval --retriver pyserini_bm25 --top-k 50 --output-name pyserini_bm25_test_k50
@@ -254,7 +265,8 @@ uv run retriver-eval --retriver dense --top-k 50 --output-name dense_test_k50
 ```
 
 `uv run patient-candidates` 当前默认使用 `pyserini_bm25` 生成 `top50` 候选集，并写入 `resource/patient_candidate/<retriver>_top50/{split}.jsonl`。
-`uv run model-train` 会从同一路径读取冻结候选集，并把 checkpoint 与训练报告写入 `output/model/`。
+`uv run gnn-data` 会从冻结候选集构建 `resource/gnn_data/<retriver>_top50/{split}/`，目录内包含 `slot_*.pkl` 和 `meta.json`。
+`uv run model-train` 会从该中间目录读取训练样本，并把 checkpoint 与训练报告写入 `output/model/`。
 
 ## 当前状态
 

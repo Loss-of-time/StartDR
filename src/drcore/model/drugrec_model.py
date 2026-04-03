@@ -8,6 +8,7 @@ from ..schema.drugrec_task import (
     DrugRecCheckpoint,
     DrugRecModelName,
     DrugRecResult,
+    DrugRecTrainSample,
     EvalStepOutput,
     GNNRecResult,
     TrainStepOutput,
@@ -23,7 +24,7 @@ class DrugRecModel(nn.Module, ABC):
     @abstractmethod
     def build_for_train(
         cls,
-        train_cases: list[DrugRecCase],
+        train_samples: list[DrugRecTrainSample],
         top_k: int,
     ) -> Self:
         """用训练病例完成训练期初始化。"""
@@ -31,14 +32,14 @@ class DrugRecModel(nn.Module, ABC):
     @abstractmethod
     def train_step(
         self,
-        cases: list[DrugRecCase],
+        samples: list[DrugRecTrainSample],
     ) -> TrainStepOutput:
         """执行一次训练步。"""
 
     @abstractmethod
     def eval_step(
         self,
-        cases: list[DrugRecCase],
+        samples: list[DrugRecTrainSample],
     ) -> EvalStepOutput:
         """执行一次评测步并返回通用结果。"""
 
@@ -60,7 +61,7 @@ class GNNRecModel(DrugRecModel, ABC):
     @abstractmethod
     def eval_step(
         self,
-        cases: list[DrugRecCase],
+        samples: list[DrugRecTrainSample],
     ) -> EvalStepOutput:
         """执行一次评测步并返回 GNN 扩展结果。"""
 

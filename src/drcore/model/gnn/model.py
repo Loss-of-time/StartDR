@@ -11,11 +11,13 @@ from ...schema.drugrec_task import (
     DrugRecCase,
     DrugRecCheckpoint,
     DrugRecMetrics,
+    DrugRecTrainSample,
     EvalStepOutput,
     GNNEdge,
     GNNGraphSample,
     GNNNodeScore,
     GNNRecResult,
+    GNNTrainSample,
     ModelStateDict,
     NumericFeatureStats,
     RankedDrug,
@@ -23,34 +25,7 @@ from ...schema.drugrec_task import (
     TrainStepOutput,
 )
 from ..drugrec_model import GNNRecModel
-from .data_set import (
-    GNNGraphSampleBuilder,
-    fit_numeric_feature_stats,
-)
-
-
-class GNNGraphSampleCache:
-    """按病例对象缓存图样本，避免训练期重复构图。"""
-
-    def __init__(self) -> None:
-        """初始化空缓存。"""
-        self.graph_sample_by_case_id: dict[int, GNNGraphSample] = {}
-
-    def get(self, case: DrugRecCase) -> GNNGraphSample:
-        """获取单个病例图样本，未命中时即时构建。"""
-        case_id = id(case)
-        graph_sample = self.graph_sample_by_case_id.get(case_id)
-        if graph_sample is None:
-            graph_sample = GNNGraphSampleBuilder(case).build()
-            self.graph_sample_by_case_id[case_id] = graph_sample
-        return graph_sample
-
-    def get_many(
-        self,
-        cases: list[DrugRecCase],
-    ) -> list[GNNGraphSample]:
-        """按病例顺序返回图样本列表。"""
-        return [self.get(case) for case in cases]
+from .data_set import GNNGraphSampleBuilder, fit_numeric_feature_stats
 
 
 class GNNModel(GNNRecModel):
@@ -63,10 +38,11 @@ class GNNModel(GNNRecModel):
     @classmethod
     def build_for_train(
         cls,
-        train_cases: list[DrugRecCase],
+        train_samples: list[DrugRecTrainSample],
         top_k: int,
     ) -> "GNNModel":
         """用训练病例拟合标准化统计量并构建模型。"""
+        train_cases = [sample["case"] for sample in train_samples]
         return cls(
             stats=fit_numeric_feature_stats(train_cases),
             top_k=top_k,
@@ -89,7 +65,6 @@ class GNNModel(GNNRecModel):
             nn.Linear(hidden_size, 1),
         )
         self.loss_fn = nn.BCEWithLogitsLoss()
-        self.graph_sample_cache = GNNGraphSampleCache()
 
     def forward(
         self,
@@ -133,7 +108,7 @@ class GNNModel(GNNRecModel):
 
     def predict(self, case: DrugRecCase) -> GNNRecResult:
         """对单个病例输出药物排序结果。"""
-        graph_sample = self.graph_sample_cache.get(case)
+        graph_sample = GNNGraphSampleBuilder(case).build()
         was_training = self.training
         self.eval()
         with torch.no_grad():
@@ -144,11 +119,11 @@ class GNNModel(GNNRecModel):
 
     def train_step(
         self,
-        cases: list[DrugRecCase],
+        samples: list[DrugRecTrainSample],
     ) -> TrainStepOutput:
         """执行一次训练步并返回训练损失。"""
         self.train()
-        graph_samples = self.graph_sample_cache.get_many(cases)
+        cases, graph_samples = self._split_train_samples(samples)
         logits_list = self.forward(graph_samples)
         loss_terms = [
             self.loss_fn(
@@ -199,10 +174,10 @@ class GNNModel(GNNRecModel):
 
     def eval_step(
         self,
-        cases: list[DrugRecCase],
+        samples: list[DrugRecTrainSample],
     ) -> EvalStepOutput:
         """执行一次评测步并返回批量排序结果。"""
-        graph_samples = self.graph_sample_cache.get_many(cases)
+        cases, graph_samples = self._split_train_samples(samples)
         was_training = self.training
         self.eval()
         with torch.no_grad():
@@ -221,6 +196,17 @@ class GNNModel(GNNRecModel):
         return {
             "results": results,
         }
+
+    def _split_train_samples(
+        self,
+        samples: list[DrugRecTrainSample],
+    ) -> tuple[list[DrugRecCase], list[GNNGraphSample]]:
+        """拆出病例与预构建图样本。"""
+        gnn_samples = [cast(GNNTrainSample, sample) for sample in samples]
+        return (
+            [sample["case"] for sample in gnn_samples],
+            [sample["graph_sample"] for sample in gnn_samples],
+        )
 
     def build_checkpoint(self) -> DrugRecCheckpoint:
         """导出当前模型的 checkpoint。"""

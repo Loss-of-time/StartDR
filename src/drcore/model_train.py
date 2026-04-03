@@ -8,27 +8,27 @@ from typing import TypedDict, cast
 import torch
 from rich.progress import Progress
 
-from .data.jsonl import load_jsonl
 from .metrics.drugrec import aggregate_drugrec_metrics, get_drugrec_metrics
 from .metrics.gnn_drugrec import aggregate_gnn_metrics, get_gnn_metrics
 from .model.drugrec_model import DrugRecModel
-from .model.gnn_reranker.model import GNNModel
+from .model.gnn.intermediate import load_train_samples
+from .model.gnn.model import GNNModel
 from .schema.drugrec_task import (
-    DrugRecCase,
     DrugRecCheckpoint,
     DrugRecMetrics,
     DrugRecModelName,
     DrugRecResult,
+    DrugRecTrainSample,
     GNNRecResult,
 )
 from .utils.log import get_console, setup_logging
 from .utils.paths import OUTPUT_DIR, RESOURCE_DIR
 
 DEFAULT_TRAIN_INPUT = (
-    RESOURCE_DIR / "patient_candidate" / "pyserini_bm25_top50" / "train.jsonl"
+    RESOURCE_DIR / "gnn_data" / "pyserini_bm25_top50" / "train"
 )
 DEFAULT_DEV_INPUT = (
-    RESOURCE_DIR / "patient_candidate" / "pyserini_bm25_top50" / "dev.jsonl"
+    RESOURCE_DIR / "gnn_data" / "pyserini_bm25_top50" / "dev"
 )
 DEFAULT_OUTPUT_DIR = OUTPUT_DIR / "model"
 DEFAULT_TOP_K = 50
@@ -82,12 +82,12 @@ def get_model_names() -> list[DrugRecModelName]:
 
 def build_model(
     name: DrugRecModelName,
-    train_cases: list[DrugRecCase],
+    train_samples: list[DrugRecTrainSample],
     top_k: int,
 ) -> DrugRecModel:
     """根据名称构建训练态推荐模型。"""
     return MODEL_REGISTRY[name].build_for_train(
-        train_cases=train_cases,
+        train_samples=train_samples,
         top_k=top_k,
     )
 
@@ -123,27 +123,28 @@ def parse_args() -> argparse.Namespace:
 
 
 def iter_batches(
-    cases: list[DrugRecCase],
+    samples: list[DrugRecTrainSample],
     batch_size: int,
-) -> list[list[DrugRecCase]]:
-    """按固定 batch size 切分病例列表。"""
+) -> list[list[DrugRecTrainSample]]:
+    """按固定 batch size 切分训练样本列表。"""
     return [
-        cases[index:index + batch_size]
-        for index in range(0, len(cases), batch_size)
+        samples[index:index + batch_size]
+        for index in range(0, len(samples), batch_size)
     ]
 
 
 def evaluate_model(
     model: DrugRecModel,
-    cases: list[DrugRecCase],
+    samples: list[DrugRecTrainSample],
     batch_size: int,
 ) -> tuple[DrugRecMetrics, list[DrugRecResult]]:
     """执行一轮开发集评测并聚合正式指标。"""
     results: list[DrugRecResult] = []
     with torch.no_grad():
-        for batch_cases in iter_batches(cases, batch_size):
-            output = model.eval_step(batch_cases)
+        for batch_samples in iter_batches(samples, batch_size):
+            output = model.eval_step(batch_samples)
             results.extend(output["results"])
+    cases = [sample["case"] for sample in samples]
     base_metrics = aggregate_drugrec_metrics(
         [
             get_drugrec_metrics(case, result)
@@ -169,23 +170,15 @@ def main() -> None:
     args = parse_args()
     log_path = setup_logging()
     LOGGER.info("日志文件: %s", log_path.resolve())
-    LOGGER.info("开始读取训练集: %s", args.train_input.resolve())
-    train_cases = load_jsonl(
-        path=args.train_input,
-        parse_line=lambda row: cast(DrugRecCase, row),
-        limit=args.train_limit,
-    )
-    LOGGER.info("训练病例数: %s", len(train_cases))
-    LOGGER.info("开始读取验证集: %s", args.dev_input.resolve())
-    dev_cases = load_jsonl(
-        path=args.dev_input,
-        parse_line=lambda row: cast(DrugRecCase, row),
-        limit=args.dev_limit,
-    )
-    LOGGER.info("验证病例数: %s", len(dev_cases))
-    if not train_cases:
+    LOGGER.info("开始读取训练中间目录: %s", args.train_input.resolve())
+    train_samples = load_train_samples(args.train_input, args.train_limit)
+    LOGGER.info("训练样本数: %s", len(train_samples))
+    LOGGER.info("开始读取验证中间目录: %s", args.dev_input.resolve())
+    dev_samples = load_train_samples(args.dev_input, args.dev_limit)
+    LOGGER.info("验证样本数: %s", len(dev_samples))
+    if not train_samples:
         raise ValueError("训练集为空，无法执行训练。")
-    if not dev_cases:
+    if not dev_samples:
         raise ValueError("验证集为空，无法选择最佳 checkpoint。")
 
     device = (
@@ -199,7 +192,7 @@ def main() -> None:
     model_name: DrugRecModelName = cast(DrugRecModelName, args.model)
     model = build_model(
         name=model_name,
-        train_cases=train_cases,
+        train_samples=train_samples,
         top_k=args.top_k,
     ).to(device)
     optimizer = torch.optim.Adam(
@@ -218,20 +211,20 @@ def main() -> None:
     with Progress(console=get_console()) as progress:
         task_id = progress.add_task("训练模型", total=args.epochs)
         for epoch in range(1, args.epochs + 1):
-            epoch_cases = list(train_cases)
-            random_state.shuffle(epoch_cases)
+            epoch_samples = list(train_samples)
+            random_state.shuffle(epoch_samples)
             batch_losses: list[float] = []
 
-            for batch_cases in iter_batches(epoch_cases, args.batch_size):
+            for batch_samples in iter_batches(epoch_samples, args.batch_size):
                 optimizer.zero_grad()
-                output = model.train_step(batch_cases)
+                output = model.train_step(batch_samples)
                 output["loss"].backward()
                 optimizer.step()
                 batch_losses.append(output["loss_value"])
 
             train_loss = sum(batch_losses) / len(batch_losses)
             model.eval()
-            dev_metrics, _ = evaluate_model(model, dev_cases, args.batch_size)
+            dev_metrics, _ = evaluate_model(model, dev_samples, args.batch_size)
             epoch_result = cast(
                 TrainEpochResult,
                 {
@@ -262,8 +255,8 @@ def main() -> None:
             "model": model_name,
             "train_input": str(args.train_input.resolve()),
             "dev_input": str(args.dev_input.resolve()),
-            "train_case_count": len(train_cases),
-            "dev_case_count": len(dev_cases),
+            "train_case_count": len(train_samples),
+            "dev_case_count": len(dev_samples),
             "epochs": args.epochs,
             "batch_size": args.batch_size,
             "learning_rate": args.learning_rate,

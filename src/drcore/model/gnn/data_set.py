@@ -11,6 +11,7 @@ from ...schema.drugrec_task import (
     GNNGraphSample,
     GNNNode,
     GNNNodeType,
+    GNNTrainSample,
     NumericFeatureStats,
 )
 
@@ -42,6 +43,14 @@ def fit_numeric_feature_stats(
     return {
         "score_log_mean": score_log_mean,
         "score_log_std": 1.0 if score_log_std == 0.0 else score_log_std,
+    }
+
+
+def build_gnn_train_sample(case: DrugRecCase) -> GNNTrainSample:
+    """把单个病例整理为 GNN 训练中间样本。"""
+    return {
+        "case": case,
+        "graph_sample": GNNGraphSampleBuilder(case).build(),
     }
 
 

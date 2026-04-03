@@ -97,6 +97,22 @@ class DrugRecCase(TypedDict):
     candidate_drugs: list[CandidateDrug]
 
 
+class DrugRecTrainSample(TypedDict):
+    case: DrugRecCase
+
+
+class GNNTrainSample(DrugRecTrainSample):
+    graph_sample: GNNGraphSample
+
+
+class GNNIntermediateMeta(TypedDict):
+    split: DatasetSplit
+    sample_count: int
+    chunk_size: int
+    source_path: str
+    slot_names: list[str]
+
+
 class DrugRecResult(TypedDict):
     patient_id: str
     split: DatasetSplit
@@ -171,6 +187,7 @@ __all__ = [
     "DrugRecMetrics",
     "DrugRecModelName",
     "DrugRecResult",
+    "DrugRecTrainSample",
     "EvalStepOutput",
     "GNNMetrics",
     "GNNModelInitKwargs",
@@ -178,10 +195,12 @@ __all__ = [
     "GNNEdge",
     "GNNEdgeType",
     "GNNGraphSample",
+    "GNNIntermediateMeta",
     "GNNNode",
     "GNNNodeScore",
     "GNNNodeType",
     "GNNRecResult",
+    "GNNTrainSample",
     "ModelStateDict",
     "NumericFeatureStats",
     "RankedDrug",

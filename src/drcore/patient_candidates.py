@@ -16,7 +16,6 @@ from .schema import (
     PatientCandidateRetriever,
     PatientCandidateSet,
     PatientCandidateTopK,
-    RetrievedDrugCandidate,
     Retriver,
 )
 from .utils.kg import list_full_drug_details
@@ -32,13 +31,6 @@ DEFAULT_TOP_K: PatientCandidateTopK = 50
 LOGGER = logging.getLogger(__name__)
 
 
-def build_retrieval_query(patient: DrugRecRecord) -> str:
-    """按固定规则生成落盘用检索 query。"""
-    diagnosis = [item.strip() for item in patient["diagnosis"] if item.strip()]
-    symptom = [item.strip() for item in patient["symptom"] if item.strip()]
-    return " ".join([*diagnosis, *symptom])
-
-
 def build_patient_candidate_set(
     patient: DrugRecRecord,
     split: DatasetSplit,
@@ -48,22 +40,36 @@ def build_patient_candidate_set(
     drug_detail_map: dict[str, DrugRecMedicine],
 ) -> PatientCandidateSet:
     """生成单个患者的患者候选集样本。"""
-    retrieval_query = build_retrieval_query(patient)
-    gold_drugids = _get_gold_drugids(patient)
+    diagnosis = [item.strip() for item in patient["diagnosis"] if item.strip()]
+    symptom = [item.strip() for item in patient["symptom"] if item.strip()]
+    gold_drugids = list(
+        dict.fromkeys(medicine["drugid"] for medicine in patient["medicine"])
+    )
+    gold_drugid_set = set(gold_drugids)
     retrieved = retriever.retrieve(patient, top_k=top_k)
+    candidate_drugs: list[CandidateDrug] = []
+
+    for rank, candidate in enumerate(retrieved, start=1):
+        drugid = candidate["drugid"]
+        candidate_drugs.append(
+            {
+                "drugid": drugid,
+                "rank": rank,
+                "score": candidate["score"],
+                "drug": drug_detail_map[drugid],
+                "is_gold": drugid in gold_drugid_set,
+            }
+        )
+
     sample: PatientCandidateSet = {
         "patient_id": patient["id"],
         "split": split,
         "retriever": retriever_name,
         "top_k": top_k,
-        "retrieval_query": retrieval_query,
+        "retrieval_query": " ".join([*diagnosis, *symptom]),
         "patient": patient,
         "gold_drugids": gold_drugids,
-        "candidate_drugs": _build_candidate_drugs(
-            retrieved=retrieved,
-            drug_detail_map=drug_detail_map,
-            gold_drugids=set(gold_drugids),
-        ),
+        "candidate_drugs": candidate_drugs,
     }
     # _validate_patient_candidate_set(sample)
     return sample
@@ -96,56 +102,9 @@ def build_patient_candidate_sets(
     return samples
 
 
-def _get_gold_drugids(patient: DrugRecRecord) -> list[str]:
-    """返回当前患者的金标准药品 ID 列表。"""
-    return list(
-        dict.fromkeys(medicine["drugid"] for medicine in patient["medicine"])
-    )
-
-
-def _build_candidate_drugs(
-    retrieved: list[RetrievedDrugCandidate],
-    drug_detail_map: dict[str, DrugRecMedicine],
-    gold_drugids: set[str],
-) -> list[CandidateDrug]:
-    """把召回结果补全成冻结候选药列表。"""
-    candidate_drugs: list[CandidateDrug] = []
-
-    for rank, candidate in enumerate(retrieved, start=1):
-        drugid = candidate["drugid"]
-        candidate_drugs.append(
-            {
-                "drugid": drugid,
-                "rank": rank,
-                "score": candidate["score"],
-                "drug": drug_detail_map[drugid],
-                "is_gold": drugid in gold_drugids,
-            }
-        )
-
-    return candidate_drugs
-
-
 # def _validate_patient_candidate_set(sample: PatientCandidateSet) -> None:
 #     """校验单条患者候选集样本，不通过直接报错。"""
 #     ...
-
-
-def _build_output_path(
-    retriever_name: PatientCandidateRetriever,
-    top_k: PatientCandidateTopK,
-    split: DatasetSplit,
-) -> Path:
-    """构造患者候选集输出路径。"""
-    return (
-        DEFAULT_OUTPUT_DIR / f"{retriever_name}_top{top_k}" / f"{split}.jsonl"
-    )
-
-
-def _build_drug_detail_map() -> dict[str, DrugRecMedicine]:
-    return {detail["drugid"]: detail for detail in list_full_drug_details()}
-
-
 ###############################################################
 # 命令行入口
 ###############################################################
@@ -181,10 +140,10 @@ def main() -> None:
     split = args.split
     retriever_name: PatientCandidateRetriever = args.retriver
     input_path = args.input_dir / f"{split}.jsonl"
-    output_path = _build_output_path(
-        retriever_name=retriever_name,
-        top_k=DEFAULT_TOP_K,
-        split=split,
+    output_path = (
+        DEFAULT_OUTPUT_DIR
+        / f"{retriever_name}_top{DEFAULT_TOP_K}"
+        / f"{split}.jsonl"
     )
 
     log_path = setup_logging()
@@ -199,7 +158,10 @@ def main() -> None:
     LOGGER.info("开始构建检索器: %s", retriever_name)
     retriever = build_retriver(retriever_name)
     LOGGER.info("开始加载全量药品详情")
-    drug_detail_map = _build_drug_detail_map()
+    drug_detail_map = {
+        detail["drugid"]: detail
+        for detail in list_full_drug_details()
+    }
     LOGGER.info("开始生成患者候选集，top_k=%s", DEFAULT_TOP_K)
     samples = build_patient_candidate_sets(
         patients=patients,
@@ -220,7 +182,6 @@ def main() -> None:
 __all__ = [
     "build_patient_candidate_set",
     "build_patient_candidate_sets",
-    "build_retrieval_query",
 ]
 
 

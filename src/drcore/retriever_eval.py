@@ -17,7 +17,6 @@ from .metrics.retrieval import (
 from .retrieval import build_retriver, get_retriver_names
 from .schema import (
     DrugRecRecord,
-    MetricsResult,
     RetrievedDrugCandidate,
     Retriver,
     RetriverEvalReport,
@@ -47,15 +46,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def evaluate_one_batch(
-    patient: DrugRecRecord,
-    candidates: Sequence[RetrievedDrugCandidate],
-) -> MetricsResult:
-    gold_ids = get_gold_ids(patient)
-    retrieved_ids = [candidate["drugid"] for candidate in candidates]
-    return get_metrics_result(gold_ids, retrieved_ids)
-
-
 def test_retriver(
     retriver: Retriver,
     data: Sequence[DrugRecRecord],
@@ -68,7 +58,10 @@ def test_retriver(
             candidate_batches.append(retriver.retrieve(patient, top_k=top_k))
             progress.advance(task_id)
     metrics_list = [
-        evaluate_one_batch(patient, candidates)
+        get_metrics_result(
+            get_gold_ids(patient),
+            [candidate["drugid"] for candidate in candidates],
+        )
         for patient, candidates in zip(data, candidate_batches, strict=True)
     ]
     return {
@@ -81,13 +74,6 @@ def test_retriver(
         "summary": get_summary(metrics_list),
         "metrics": aggregate_metrics(metrics_list),
     }
-
-
-def build_output_path(output_name: str) -> Path:
-    output_file_name = (
-        output_name if output_name.endswith(".json") else f"{output_name}.json"
-    )
-    return DEFAULT_OUTPUT_DIR / output_file_name
 
 
 def main() -> None:
@@ -111,7 +97,12 @@ def main() -> None:
     )
     report["config"]["retriver_name"] = args.retriver
     report["config"]["input_path"] = str(args.input.resolve())
-    output_path = build_output_path(args.output_name)
+    output_file_name = (
+        args.output_name
+        if args.output_name.endswith(".json")
+        else f"{args.output_name}.json"
+    )
+    output_path = DEFAULT_OUTPUT_DIR / output_file_name
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as file:
         json.dump(report, file, ensure_ascii=False, indent=2)

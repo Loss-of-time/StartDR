@@ -5,7 +5,7 @@ from .pyserini_bm25 import PyseriniBM25Retriver
 
 
 def get_retriver_names() -> list[str]:
-    return ["bm25", "pyserini_bm25", "dense", "dual_tower"]
+    return ["bm25", "pyserini_bm25", "dense"]
 
 
 def build_retriver(name: str) -> Retriver:

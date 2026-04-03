@@ -84,9 +84,7 @@ StartDR/
 
 当前主要函数：
 
-- `list_drug_ids()`
 - `list_full_drug_details()`
-- `get_drug_details_by_ids()`
 
 ### `src/drcore/retrieval/bm25.py`
 
@@ -126,7 +124,7 @@ StartDR/
 检索器注册入口。
 
 - `build_retriver(name: str)` 当前实际支持 `bm25`、`pyserini_bm25` 和 `dense`
-- `get_retriver_names()` 仍返回 `dual_tower` 占位名，但当前目录下没有对应实现文件，不能直接构造
+- `get_retriver_names()` 仅返回当前可实际构造的检索器名称
 
 ### `src/drcore/patient_candidates.py`
 
@@ -244,6 +242,6 @@ uv run retriver-eval --retriver dense --top-k 50 --output-name dense_test_k50
 - 已有患者读取、Neo4j 查询、BM25 召回、Pyserini BM25 召回、Dense 召回、离线评测这条最短实验链路
 - `DrugRec.jsonl`、KG 全量药品详情与冻结候选集中的 `ingredients` / `interaction` 字段现已统一为单一命名，不再保留别名
 - 文档、数据、缓存、输出目录以本地实验资源为主，不按仓库源码管理
-- 检索注册表里仍留有 `dual_tower` 占位名，但当前仓库中没有对应实现，不能视为可用能力
+- 检索注册表当前仅暴露 `bm25`、`pyserini_bm25` 和 `dense` 三个可实际运行的检索器
 
 如果后续修改了目录、默认路径或脚本入口，必须同步更新本文件。

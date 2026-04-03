@@ -1,19 +1,14 @@
 from collections.abc import Sequence
 
 from ..schema import (
-    DrugRecMedicine,
     DrugRecRecord,
     MetricsResult,
     SummaryResult,
 )
 
 
-def get_gold_medicines(patient: DrugRecRecord) -> list[DrugRecMedicine]:
-    return patient["medicine"]
-
-
 def get_gold_ids(patient: DrugRecRecord) -> set[str]:
-    return {medicine["drugid"] for medicine in get_gold_medicines(patient)}
+    return {medicine["drugid"] for medicine in patient["medicine"]}
 
 
 def hit_at_k(

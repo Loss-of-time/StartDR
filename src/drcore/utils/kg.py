@@ -1,14 +1,10 @@
 """负责执行知识图谱查询，并把结果整理成 Python 结构。"""
 
-import logging
 from typing import Final, cast
 
 from neo4j import Driver, GraphDatabase, NotificationMinimumSeverity
 
-from ..constant import (
-    LIST_DRUG_INDEX_QUERY,
-    LIST_FULL_DRUG_DETAIL_QUERY,
-)
+from ..constant import LIST_FULL_DRUG_DETAIL_QUERY
 from ..schema import DrugRecMedicine
 from .kg_cache_decorator import kg_cache
 
@@ -18,15 +14,7 @@ DRIVER: Final[Driver] = GraphDatabase.driver(
     notifications_min_severity=NotificationMinimumSeverity.OFF,
 )
 
-LOGGER = logging.getLogger(__name__)
 _DRUG_DETAIL_MAP: dict[str, DrugRecMedicine] | None = None
-
-
-@kg_cache
-def list_drug_ids() -> list[int]:
-    with DRIVER.session() as session:
-        result = session.run(LIST_DRUG_INDEX_QUERY)
-        return [record["drugid"] for record in result]
 
 
 @kg_cache
@@ -69,16 +57,3 @@ def _get_drug_detail_map_singleton() -> dict[str, DrugRecMedicine]:
         _DRUG_DETAIL_MAP = _build_drug_detail_map()
 
     return _DRUG_DETAIL_MAP
-
-
-def get_drug_details_by_ids(drug_ids: list[str]) -> list[DrugRecMedicine]:
-    drug_detail_map = _get_drug_detail_map_singleton()
-    details: list[DrugRecMedicine] = []
-    append = details.append
-
-    for drugid in drug_ids:
-        detail = drug_detail_map.get(drugid)
-        if detail is not None:
-            append(detail)
-
-    return details

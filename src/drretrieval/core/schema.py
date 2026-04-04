@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from cattrs import Converter
 
@@ -145,7 +145,7 @@ _converter = Converter()
 
 
 def structure(data: object, target: object) -> Any:
-    return _converter.structure(data, target)
+    return _converter.structure(data, cast(Any, target))
 
 
 def unstructure(data: object) -> Any:

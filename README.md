@@ -95,6 +95,18 @@ StartDR/
 uv sync
 ```
 
+静态检查：
+
+```powershell
+uv run ruff check .
+uv run pyright
+```
+
+说明：
+
+- `ruff check` 负责 lint 与部分明显错误，不负责完整类型检查
+- `pyright` 负责类型检查，当前配置等价于 VS Code `python.analysis.typeCheckingMode = "standard"` 的命令行版本
+
 运行前至少需要准备：
 
 - 本地 Neo4j，地址 `bolt://localhost:7687`
@@ -128,4 +140,5 @@ uv run rerank-train --train-input resource/gnn_data/pyserini_bm25_top50/train --
 - 检索与检索后精排训练已经拆成两个子项目
 - 两边只通过候选集 `jsonl` 交接，不再共享统一运行入口
 - `drrerank` 不再包含 Neo4j 查询、检索器实现、检索评测逻辑
+- `ruff check` 与 `pyright` 分工明确，类型问题应以 `pyright` 为准
 - 文档、路径、脚本入口若后续再改，必须同步更新本文件

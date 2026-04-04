@@ -13,6 +13,7 @@ dependencies = [
     "jaxtyping",
     "jieba",
     "neo4j",
+    "pyright>=1.1.405",
     "pyserini",
     "rank-bm25",
     "tqdm",
@@ -43,6 +44,15 @@ line-length = 80
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 ignore = ["E501", "F821", "F722", "UP037"]
+
+[tool.pyright]
+include = ["src"]
+exclude = ["resource", "output", ".venv"]
+pythonVersion = "3.13"
+typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"
+reportMissingTypeStubs = "none"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/drretrieval", "src/drrerank"]

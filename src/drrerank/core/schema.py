@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import torch
 from cattrs import Converter
@@ -202,8 +202,8 @@ _converter.register_structure_hook(EntityLabelTensor, lambda value, _: value)
 _converter.register_structure_hook(EvidenceLabelTensor, lambda value, _: value)
 
 
-def structure(data: object, target: object) -> object:
-    return _converter.structure(data, target)
+def structure(data: object, target: object) -> Any:
+    return _converter.structure(data, cast(Any, target))
 
 
 def unstructure(data: object) -> object:

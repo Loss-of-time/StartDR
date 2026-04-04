@@ -64,9 +64,10 @@ def load_train_samples(
     meta_path = input_dir / "meta.json"
     with meta_path.open(encoding="utf-8") as file:
         meta = cast(GNNIntermediateMeta, json.load(file))
+    data_file = meta.get("data_file", DEFAULT_DATA_FILE)
     samples = cast(
         list[GNNTrainSample],
-        load_pickle(input_dir / meta["data_file"]),
+        load_pickle(input_dir / data_file),
     )
     if limit is not None:
         return samples[:limit]

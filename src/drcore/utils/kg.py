@@ -73,8 +73,6 @@ DRIVER: Final[Driver] = GraphDatabase.driver(
     notifications_min_severity=NotificationMinimumSeverity.OFF,
 )
 
-_DRUG_DETAIL_MAP: dict[str, DrugRecMedicine] | None = None
-
 
 @kg_cache
 def list_full_drug_details() -> list[DrugRecMedicine]:

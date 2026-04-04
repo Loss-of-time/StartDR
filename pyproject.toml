@@ -5,16 +5,17 @@ build-backend = "hatchling.build"
 [project]
 name = "StartDR"
 version = "0.1.0"
-description = "DrugRec 患者数据、知识图谱与检索实验的最短链路工程。"
+description = "DrugRec 检索与检索后精排训练的双子项目工程。"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "cattrs",
     "jaxtyping",
     "jieba",
     "neo4j",
     "pyserini",
     "rank-bm25",
-    "rich",
+    "tqdm",
     "torch",
     "transformers",
     "viztracer>=1.1.1",
@@ -31,12 +32,10 @@ url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [project.scripts]
-gnn-data = "drcore.model.gnn.intermediate:main"
-model-train = "drcore.model_train:main"
-patient-candidates = "drcore.patient_candidates:main"
-retrieval-bm25 = "drcore.retrieval.bm25:main"
-retrieval-dense = "drcore.retrieval.dense:main"
-retriver-eval = "drcore.retriever_eval:main"
+patient-candidates = "drretrieval.patient_candidates:main"
+retriever-eval = "drretrieval.retriever_eval:main"
+rerank-build-data = "drrerank.build_data:main"
+rerank-train = "drrerank.train:main"
 
 [tool.ruff]
 line-length = 80
@@ -46,4 +45,4 @@ select = ["E", "F", "I", "UP"]
 ignore = ["E501", "F821", "F722", "UP037"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/drcore"]
+packages = ["src/drretrieval", "src/drrerank"]

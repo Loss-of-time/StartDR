@@ -1,11 +1,26 @@
-"""负责执行知识图谱查询，并把结果整理成 Python 结构。"""
+from pathlib import Path
 
-from typing import Final, cast
+CORE_DIR = Path(__file__).resolve().parent
+PACKAGE_DIR = CORE_DIR.parent
+SRC_DIR = PACKAGE_DIR.parent
+PROJECT_DIR = SRC_DIR.parent
+RESOURCE_DIR = PROJECT_DIR / "resource"
+OUTPUT_DIR = PROJECT_DIR / "output"
 
-from neo4j import Driver, GraphDatabase, NotificationMinimumSeverity
+DEFAULT_PATIENT_INPUT_DIR = RESOURCE_DIR / "DrugRec0328"
+DEFAULT_PATIENT_CANDIDATE_OUTPUT_DIR = RESOURCE_DIR / "patient_candidate"
+DEFAULT_RETRIEVER_EVAL_INPUT = RESOURCE_DIR / "DrugRec0328" / "test.jsonl"
+DEFAULT_RETRIEVER_EVAL_OUTPUT_DIR = OUTPUT_DIR / "retriever"
+DEFAULT_RETRIEVER_NAME = "pyserini_bm25"
+DEFAULT_TOP_K = 50
 
-from ..schema import DrugRecMedicine
-from .kg_cache_decorator import kg_cache
+DENSE_MODEL_ID = "DMetaSoul/sbert-chinese-general-v2"
+QUERY_INSTRUCTION = "为这个句子生成表示以用于检索相关文章："
+CACHE_DIR = RESOURCE_DIR / "cache"
+PY_SERINI_INDEX_DIR = CACHE_DIR / "pyserini_bm25_zh"
+KG_CACHE_PATH = CACHE_DIR / "drretrieval__core__kg__list_full_drug_details.pkl"
+KG_BOLT_URL = "bolt://localhost:7687"
+KG_AUTH = ("neo4j", "password")
 
 LIST_FULL_DRUG_DETAIL_QUERY = """
 MATCH (drug:`药品`)
@@ -66,35 +81,3 @@ RETURN
     [x IN ingredient_rows WHERE x IS NOT NULL] AS ingredients,
     [x IN treat_rows WHERE x IS NOT NULL] AS treat
 """
-
-DRIVER: Final[Driver] = GraphDatabase.driver(
-    "bolt://localhost:7687",
-    auth=("neo4j", "password"),
-    notifications_min_severity=NotificationMinimumSeverity.OFF,
-)
-
-
-@kg_cache
-def list_full_drug_details() -> list[DrugRecMedicine]:
-    with DRIVER.session() as session:
-        result = session.run(LIST_FULL_DRUG_DETAIL_QUERY)
-        details: list[DrugRecMedicine] = []
-        append = details.append
-        for record in result:
-            row = cast(dict[str, object], record.data())
-            drugid = str(row["drugid"])
-            append(
-                cast(
-                    DrugRecMedicine,
-                    {
-                        "drugid": drugid,
-                        "name": row["name"],
-                        "CMAN": row["CMAN"],
-                        "caution": row["caution"],
-                        "ingredients": row["ingredients"],
-                        "interaction": row["interaction"],
-                        "treat": row["treat"],
-                    },
-                ),
-            )
-        return details

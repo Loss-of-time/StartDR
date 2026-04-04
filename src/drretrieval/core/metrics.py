@@ -1,14 +1,10 @@
 from collections.abc import Sequence
 
-from ..schema import (
-    DrugRecRecord,
-    MetricsResult,
-    SummaryResult,
-)
+from .schema import DrugRecRecord, MetricsResult, SummaryResult
 
 
 def get_gold_ids(patient: DrugRecRecord) -> set[str]:
-    return {medicine["drugid"] for medicine in patient["medicine"]}
+    return {medicine.drugid for medicine in patient.medicine}
 
 
 def hit_at_k(
@@ -41,30 +37,26 @@ def get_metrics_result(
     gold_ids: set[str],
     retrieved_ids: Sequence[str],
 ) -> MetricsResult:
-    return {
-        "hit": hit_at_k(gold_ids, retrieved_ids),
-        "recall": recall_at_k(gold_ids, retrieved_ids),
-        "mrr": mrr_at_k(gold_ids, retrieved_ids),
-    }
+    return MetricsResult(
+        hit=hit_at_k(gold_ids, retrieved_ids),
+        recall=recall_at_k(gold_ids, retrieved_ids),
+        mrr=mrr_at_k(gold_ids, retrieved_ids),
+    )
 
 
 def aggregate_metrics(metrics_list: Sequence[MetricsResult]) -> MetricsResult:
     if not metrics_list:
-        return {
-            "hit": 0.0,
-            "recall": 0.0,
-            "mrr": 0.0,
-        }
+        return MetricsResult(hit=0.0, recall=0.0, mrr=0.0)
     total = len(metrics_list)
-    return {
-        "hit": sum(metrics["hit"] for metrics in metrics_list) / total,
-        "recall": sum(metrics["recall"] for metrics in metrics_list) / total,
-        "mrr": sum(metrics["mrr"] for metrics in metrics_list) / total,
-    }
+    return MetricsResult(
+        hit=sum(metrics.hit for metrics in metrics_list) / total,
+        recall=sum(metrics.recall for metrics in metrics_list) / total,
+        mrr=sum(metrics.mrr for metrics in metrics_list) / total,
+    )
 
 
 def get_summary(metrics_list: Sequence[MetricsResult]) -> SummaryResult:
-    return {
-        "patient_count": len(metrics_list),
-        "failure_count": sum(1 for metrics in metrics_list if metrics["hit"] == 0.0),
-    }
+    return SummaryResult(
+        patient_count=len(metrics_list),
+        failure_count=sum(1 for metrics in metrics_list if metrics.hit == 0.0),
+    )

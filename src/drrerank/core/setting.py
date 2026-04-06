@@ -7,9 +7,15 @@ PROJECT_DIR = SRC_DIR.parent
 RESOURCE_DIR = PROJECT_DIR / "resource"
 OUTPUT_DIR = PROJECT_DIR / "output"
 
-DEFAULT_GNN_DATA_INPUT_DIR = RESOURCE_DIR / "patient_candidate" / "pyserini_bm25_top50"
-DEFAULT_GNN_DATA_OUTPUT_ROOT = RESOURCE_DIR / "gnn_data"
-DEFAULT_TRAIN_INPUT_DIR = RESOURCE_DIR / "gnn_data" / "pyserini_bm25_top50" / "train"
-DEFAULT_DEV_INPUT_DIR = RESOURCE_DIR / "gnn_data" / "pyserini_bm25_top50" / "dev"
+DEFAULT_TRACEDR_JSONL_OUTPUT_ROOT = RESOURCE_DIR / "patient_candidate"
+DEFAULT_TRAIN_INPUT_PATH = (
+    DEFAULT_TRACEDR_JSONL_OUTPUT_ROOT
+    / "pyserini_bm25_top50"
+    / "train.jsonl"
+)
+DEFAULT_DEV_INPUT_PATH = (
+    DEFAULT_TRACEDR_JSONL_OUTPUT_ROOT
+    / "pyserini_bm25_top50"
+    / "dev.jsonl"
+)
 DEFAULT_MODEL_OUTPUT_DIR = OUTPUT_DIR / "model"
-DEFAULT_DATA_FILE = "samples.pkl"

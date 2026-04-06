@@ -1,9 +1,7 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
-from pickle import HIGHEST_PROTOCOL, dump, load
-
-from .schema import unstructure
+from pickle import load
 
 
 def load_jsonl[T](
@@ -22,12 +20,18 @@ def load_jsonl[T](
         return rows
 
 
+def write_jsonl[T](
+    path: Path,
+    rows: list[T],
+    serialize_row: Callable[[T], str],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as file:
+        for row in rows:
+            file.write(serialize_row(row))
+            file.write("\n")
+
+
 def load_pickle(path: Path) -> object:
     with path.open("rb") as file:
         return load(file)
-
-
-def write_pickle(path: Path, data: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("wb") as file:
-        dump(unstructure(data), file, protocol=HIGHEST_PROTOCOL)

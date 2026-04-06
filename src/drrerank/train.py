@@ -19,9 +19,9 @@ from .core.schema import (
     unstructure,
 )
 from .core.setting import (
-    DEFAULT_DEV_INPUT_DIR,
+    DEFAULT_DEV_INPUT_PATH,
     DEFAULT_MODEL_OUTPUT_DIR,
-    DEFAULT_TRAIN_INPUT_DIR,
+    DEFAULT_TRAIN_INPUT_PATH,
 )
 
 
@@ -49,8 +49,8 @@ class TrainReport:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="训练 TraceDR 风格主模型。")
-    parser.add_argument("--train-input", type=Path, default=DEFAULT_TRAIN_INPUT_DIR)
-    parser.add_argument("--dev-input", type=Path, default=DEFAULT_DEV_INPUT_DIR)
+    parser.add_argument("--train-input", type=Path, default=DEFAULT_TRAIN_INPUT_PATH)
+    parser.add_argument("--dev-input", type=Path, default=DEFAULT_DEV_INPUT_PATH)
     parser.add_argument("--output-name", type=str, required=True)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=1)
@@ -173,10 +173,10 @@ def evaluate_model(
 
 def main() -> None:
     args = parse_args()
-    print(f"开始读取训练中间目录: {args.train_input.resolve()}")
+    print(f"开始读取训练样本: {args.train_input.resolve()}")
     train_samples = load_train_samples(args.train_input, args.train_limit)
     print(f"训练样本数: {len(train_samples)}")
-    print(f"开始读取验证中间目录: {args.dev_input.resolve()}")
+    print(f"开始读取验证样本: {args.dev_input.resolve()}")
     dev_samples = load_train_samples(args.dev_input, args.dev_limit)
     print(f"验证样本数: {len(dev_samples)}")
     if not train_samples:

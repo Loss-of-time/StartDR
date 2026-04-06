@@ -35,7 +35,7 @@ explicit = true
 [project.scripts]
 patient-candidates = "drretrieval.patient_candidates:main"
 retriever-eval = "drretrieval.retriever_eval:main"
-rerank-build-data = "drrerank.build_data:main"
+rerank-import-tracedr = "drrerank.import_tracedr:main"
 rerank-train = "drrerank.train:main"
 
 [tool.ruff]

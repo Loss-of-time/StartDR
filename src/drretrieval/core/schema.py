@@ -93,24 +93,9 @@ class Retriever(ABC):
 
 
 @dataclass(slots=True)
-class CandidateDrug:
-    drugid: str
-    rank: int
-    score: float | None
-    drug: DrugRecMedicine
-    is_gold: bool
-
-
-@dataclass(slots=True)
-class PatientCandidateSet:
-    patient_id: str
-    split: DatasetSplit
-    retriever: PatientCandidateRetriever
-    top_k: int
-    retrieval_query: str
-    patient: DrugRecRecord
-    gold_drugids: list[str]
-    candidate_drugs: list[CandidateDrug]
+class TraceDRSample:
+    people: DrugRecRecord
+    top_k_drugs: dict[str, DrugRecMedicine]
 
 
 @dataclass(slots=True)

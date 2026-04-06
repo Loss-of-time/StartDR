@@ -77,24 +77,18 @@ class DrugRecRecord:
 
 
 @dataclass(slots=True)
+class TraceDRSample:
+    people: DrugRecRecord
+    top_k_drugs: dict[str, DrugRecMedicine]
+
+
+@dataclass(slots=True)
 class CandidateDrug:
     drugid: str
     rank: int
     score: float | None
     drug: DrugRecMedicine
     is_gold: bool
-
-
-@dataclass(slots=True)
-class PatientCandidateSet:
-    patient_id: str
-    split: DatasetSplit
-    retriever: str
-    top_k: int
-    retrieval_query: str
-    patient: DrugRecRecord
-    gold_drugids: list[str]
-    candidate_drugs: list[CandidateDrug]
 
 
 @dataclass(slots=True)
@@ -162,14 +156,6 @@ class GNNTrainSample:
 
 
 @dataclass(slots=True)
-class GNNIntermediateMeta:
-    split: DatasetSplit
-    sample_count: int
-    source_path: str
-    data_file: str
-
-
-@dataclass(slots=True)
 class GNNRecResult:
     patient_id: str
     split: DatasetSplit
@@ -196,10 +182,6 @@ class GNNMetrics(DrugRecMetrics):
 
 
 _converter = Converter()
-_converter.register_structure_hook(EntityEvidenceMatrix, lambda value, _: value)
-_converter.register_structure_hook(EvidenceEntityMatrix, lambda value, _: value)
-_converter.register_structure_hook(EntityLabelTensor, lambda value, _: value)
-_converter.register_structure_hook(EvidenceLabelTensor, lambda value, _: value)
 
 
 def structure(data: object, target: object) -> Any:

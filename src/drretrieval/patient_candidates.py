@@ -8,18 +8,16 @@ from tqdm import tqdm
 from .core.io import load_jsonl, write_jsonl
 from .core.kg import list_full_drug_details
 from .core.retrieval import (
-    build_query_text,
     build_retriever,
     get_retriever_names,
 )
 from .core.schema import (
-    CandidateDrug,
     DatasetSplit,
     DrugRecMedicine,
     DrugRecRecord,
     PatientCandidateRetriever,
-    PatientCandidateSet,
     Retriever,
+    TraceDRSample,
     structure,
     unstructure,
 )
@@ -31,56 +29,34 @@ from .core.setting import (
 )
 
 
-def build_patient_candidate_set(
+def build_tracedr_sample(
     patient: DrugRecRecord,
-    split: DatasetSplit,
-    retriever_name: PatientCandidateRetriever,
     top_k: int,
     retriever: Retriever,
     drug_detail_map: dict[str, DrugRecMedicine],
-) -> PatientCandidateSet:
-    gold_drugids = list(
-        dict.fromkeys(medicine.drugid for medicine in patient.medicine)
-    )
-    gold_drugid_set = set(gold_drugids)
+) -> TraceDRSample:
     retrieved = retriever.retrieve(patient, top_k=top_k)
-    candidate_drugs: list[CandidateDrug] = []
-    for rank, candidate in enumerate(retrieved, start=1):
+    top_k_drugs: dict[str, DrugRecMedicine] = {}
+    for candidate in retrieved:
         drugid = candidate.drugid
-        candidate_drugs.append(
-            CandidateDrug(
-                drugid=drugid,
-                rank=rank,
-                score=candidate.score,
-                drug=drug_detail_map[drugid],
-                is_gold=drugid in gold_drugid_set,
-            )
-        )
-    return PatientCandidateSet(
-        patient_id=patient.id,
-        split=split,
-        retriever=retriever_name,
-        top_k=top_k,
-        retrieval_query=build_query_text(patient),
-        patient=patient,
-        gold_drugids=gold_drugids,
-        candidate_drugs=candidate_drugs,
+        if drugid in top_k_drugs:
+            continue
+        top_k_drugs[drugid] = drug_detail_map[drugid]
+    return TraceDRSample(
+        people=patient,
+        top_k_drugs=top_k_drugs,
     )
 
 
-def build_patient_candidate_sets(
+def build_tracedr_samples(
     patients: list[DrugRecRecord],
-    split: DatasetSplit,
-    retriever_name: PatientCandidateRetriever,
     top_k: int,
     retriever: Retriever,
     drug_detail_map: dict[str, DrugRecMedicine],
-) -> list[PatientCandidateSet]:
+) -> list[TraceDRSample]:
     return [
-        build_patient_candidate_set(
+        build_tracedr_sample(
             patient=patient,
-            split=split,
-            retriever_name=retriever_name,
             top_k=top_k,
             retriever=retriever,
             drug_detail_map=drug_detail_map,
@@ -134,10 +110,8 @@ def main() -> None:
         for detail in list_full_drug_details()
     }
     print(f"开始生成候选集，top_k={args.top_k}")
-    samples = build_patient_candidate_sets(
+    samples = build_tracedr_samples(
         patients=patients,
-        split=split,
-        retriever_name=retriever_name,
         top_k=args.top_k,
         retriever=retriever,
         drug_detail_map=drug_detail_map,

@@ -39,7 +39,7 @@ rerank-import-tracedr = "drrerank.import_tracedr:main"
 rerank-train = "drrerank.train:main"
 
 [tool.ruff]
-line-length = 80
+line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
@@ -47,7 +47,7 @@ ignore = ["E501", "F821", "F722", "UP037"]
 
 [tool.pyright]
 include = ["src"]
-exclude = ["resource", "output", ".venv"]
+exclude = ["resource", "output", ".venv", "**/node_modules", "**/__pycache__", "**/.*"]
 pythonVersion = "3.13"
 typeCheckingMode = "standard"
 venvPath = "."

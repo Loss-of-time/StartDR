@@ -135,13 +135,15 @@ uv run rerank-train --train-input resource/patient_candidate/pyserini_bm25_top50
 uv run rerank-import-tracedr --split train
 uv run rerank-import-tracedr --split dev
 uv run rerank-import-tracedr --split test
-uv run rerank-train --train-input resource/patient_candidate/tracedr_top50/train.jsonl --dev-input resource/patient_candidate/tracedr_top50/dev.jsonl --output-name gnn_tracedr_top50 --epochs 5
+uv run rerank-train --train-input resource/patient_candidate/tracedr_top50/train.jsonl --dev-input resource/patient_candidate/tracedr_top50/dev.jsonl --output-name gnn_tracedr_top50 --epochs 5 --max-evidences 50 --max-entities 100
 ```
 
 说明：
 
 - `patient-candidates` 与 `rerank-import-tracedr` 最终都输出同一种 `{"people": ..., "top_k_drugs": ...}` `jsonl`
 - `rerank-train` 直接读取该 `jsonl` 构图，不再经过 `gnn_data` 中间层
+- `rerank-train` 当前支持按 TraceDR 口径截断图规模：默认 `--max-evidences 50`、`--max-entities 100`
+- 训练集会跳过“截断后证据中无答案”或“答案实体被截掉”的样本；验证集不会跳过
 
 ## 当前状态
 
@@ -152,3 +154,6 @@ uv run rerank-train --train-input resource/patient_candidate/tracedr_top50/train
 - `drrerank` 不再包含 Neo4j 查询、检索器实现、检索评测逻辑
 - `ruff check` 与 `pyright` 分工明确，类型问题应以 `pyright` 为准
 - 文档、路径、脚本入口若后续再改，必须同步更新本文件
+
+## TODO 可视化训练结果
+## TODO gnn 的 baseline 模型

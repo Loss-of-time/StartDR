@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import random
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,9 +8,8 @@ from pathlib import Path
 import torch
 from tqdm import tqdm
 
-from .core.gnn import GNNModel
+from .core.gnn import GNNModel, SkipTrainSample, build_gnn_train_sample
 from .core.metrics import aggregate_gnn_metrics, get_gnn_metrics
-from .core.pipeline import load_train_samples
 from .core.schema import (
     GNNMetrics,
     GNNRecResult,
@@ -23,6 +23,7 @@ from .core.setting import (
     DEFAULT_MODEL_OUTPUT_DIR,
     DEFAULT_TRAIN_INPUT_PATH,
 )
+from .core.tracedr import load_tracedr_cases
 
 
 @dataclass(slots=True)
@@ -49,13 +50,19 @@ class TrainReport:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="训练 TraceDR 风格主模型。")
-    parser.add_argument("--train-input", type=Path, default=DEFAULT_TRAIN_INPUT_PATH)
-    parser.add_argument("--dev-input", type=Path, default=DEFAULT_DEV_INPUT_PATH)
+    parser.add_argument(
+        "--train-input", type=Path, default=DEFAULT_TRAIN_INPUT_PATH
+    )
+    parser.add_argument(
+        "--dev-input", type=Path, default=DEFAULT_DEV_INPUT_PATH
+    )
     parser.add_argument("--output-name", type=str, required=True)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=1e-5)
     parser.add_argument("--hidden-size", type=int, default=768)
+    parser.add_argument("--max-entities", type=int, default=100)
+    parser.add_argument("--max-evidences", type=int, default=50)
     parser.add_argument(
         "--encoder-model-name",
         type=str,
@@ -78,7 +85,7 @@ def parse_args() -> argparse.Namespace:
 
 def iter_batches[T](items: list[T], batch_size: int) -> list[list[T]]:
     return [
-        items[index:index + batch_size]
+        items[index : index + batch_size]
         for index in range(0, len(items), batch_size)
     ]
 
@@ -121,14 +128,20 @@ def evaluate_model(
                 outputs,
                 strict=True,
             ):
-                entity_scores = torch.sigmoid(entity_logits).detach().cpu().tolist()
-                evidence_scores = torch.sigmoid(
-                    evidence_logits
-                ).detach().cpu().tolist()
+                entity_scores = (
+                    torch.sigmoid(entity_logits).detach().cpu().tolist()
+                )
+                evidence_scores = (
+                    torch.sigmoid(evidence_logits).detach().cpu().tolist()
+                )
                 ranked_drugs = [
                     RankedDrug(
                         drugid=candidate.drugid,
-                        score=float(entity_scores[entity_index]),
+                        score=(
+                            float(entity_scores[entity_index])
+                            if entity_index is not None
+                            else -math.inf
+                        ),
                         rank=0,
                         drug=candidate.drug,
                         retrieval_score=candidate.score,
@@ -159,7 +172,9 @@ def evaluate_model(
                     )
                 ]
                 ranked_evidences.sort(key=lambda item: item.score, reverse=True)
-                for rank, ranked_evidence in enumerate(ranked_evidences, start=1):
+                for rank, ranked_evidence in enumerate(
+                    ranked_evidences, start=1
+                ):
                     ranked_evidence.rank = rank
                 result = GNNRecResult(
                     patient_id=sample.case.patient_id,
@@ -170,14 +185,52 @@ def evaluate_model(
                 metrics_list.append(get_gnn_metrics(sample.case, result))
     return aggregate_gnn_metrics(metrics_list)
 
+def load_train_samples(
+    input_path: Path,
+    limit: int | None = None,
+    *,
+    max_entities: int,
+    max_evidences: int,
+    train: bool,
+) -> list[GNNTrainSample]:
+    samples: list[GNNTrainSample] = []
+    skipped_sample_count = 0
+    for case in load_tracedr_cases(input_path, limit):
+        try:
+            samples.append(
+                build_gnn_train_sample(
+                    case,
+                    max_entities=max_entities,
+                    max_evidences=max_evidences,
+                    train=train,
+                )
+            )
+        except SkipTrainSample:
+            skipped_sample_count += 1
+    if skipped_sample_count:
+        print(f"跳过样本数: {skipped_sample_count}")
+    return samples
+
 
 def main() -> None:
     args = parse_args()
     print(f"开始读取训练样本: {args.train_input.resolve()}")
-    train_samples = load_train_samples(args.train_input, args.train_limit)
+    train_samples = load_train_samples(
+        args.train_input,
+        args.train_limit,
+        max_entities=args.max_entities,
+        max_evidences=args.max_evidences,
+        train=True,
+    )
     print(f"训练样本数: {len(train_samples)}")
     print(f"开始读取验证样本: {args.dev_input.resolve()}")
-    dev_samples = load_train_samples(args.dev_input, args.dev_limit)
+    dev_samples = load_train_samples(
+        args.dev_input,
+        args.dev_limit,
+        max_entities=args.max_entities,
+        max_evidences=args.max_evidences,
+        train=False,
+    )
     print(f"验证样本数: {len(dev_samples)}")
     if not train_samples:
         raise ValueError("训练集为空，无法执行训练。")
@@ -185,8 +238,10 @@ def main() -> None:
         raise ValueError("验证集为空，无法选择最佳 checkpoint。")
 
     device = (
-        torch.device("cuda") if args.device == "auto" and torch.cuda.is_available()
-        else torch.device("cpu") if args.device == "auto"
+        torch.device("cuda")
+        if args.device == "auto" and torch.cuda.is_available()
+        else torch.device("cpu")
+        if args.device == "auto"
         else torch.device(args.device)
     )
     random_state = random.Random(args.seed)

@@ -146,7 +146,7 @@ class GNNModelInput:
     ev_to_ent: EvidenceEntityMatrix
     entity_labels: EntityLabelTensor
     evidence_labels: EvidenceLabelTensor
-    candidate_entity_indices: list[int]
+    candidate_entity_indices: list[int | None]
 
 
 @dataclass(slots=True)

@@ -4,7 +4,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from jaxtyping import Float
-from transformers import AutoModel, AutoTokenizer
+from transformers import (
+    AutoModel,
+    AutoTokenizer,
+    PreTrainedModel,
+    PreTrainedTokenizerBase,
+)
 
 from .schema import (
     DrugRecCase,
@@ -18,7 +23,16 @@ from .schema import (
 )
 
 
-def build_gnn_train_sample(case: DrugRecCase) -> GNNTrainSample:
+class SkipTrainSample(Exception):
+    pass
+
+
+def build_gnn_train_sample(
+    case: DrugRecCase,
+    max_entities: int = 100,
+    max_evidences: int = 50,
+    train: bool = False,
+) -> GNNTrainSample:
     patient = case.patient
     gold_drugids = set(case.gold_drugids)
     entities: list[GNNEntity] = []
@@ -34,10 +48,12 @@ def build_gnn_train_sample(case: DrugRecCase) -> GNNTrainSample:
         text: str,
         label: int,
         drugid: str | None,
-    ) -> int:
+    ) -> int | None:
         entity_index = entity_index_by_node_id.get(node_id)
         if entity_index is not None:
             return entity_index
+        if len(entities) >= max_entities:
+            return None
         entity_index = len(entities)
         entity_index_by_node_id[node_id] = entity_index
         entities.append(
@@ -74,22 +90,55 @@ def build_gnn_train_sample(case: DrugRecCase) -> GNNTrainSample:
         ev_to_ent_rows.append([0.0] * len(entities))
         return evidence_index
 
-    def connect(entity_index: int, evidence_index: int) -> None:
+    def link_entity_to_evidence(entity_index: int, evidence_index: int) -> None:
         ent_to_ev_rows[entity_index][evidence_index] = 1.0
         ev_to_ent_rows[evidence_index][entity_index] = 1.0
 
-    for medicine in get_ordered_evidence_medicines(case):
+    def append_entities_by_items[T](
+        evidence_index: int,
+        items: list[T],
+        node_type: GNNNodeType,
+        get_text: Callable[[T], str],
+        get_node_id: Callable[[T], str],
+    ) -> None:
+        for item in items:
+            if len(entities) >= max_entities:
+                break
+            text = get_text(item).strip()
+            if not text:
+                continue
+            entity_index = get_or_add_entity(
+                get_node_id(item),
+                node_type,
+                text,
+                0,
+                None,
+            )
+            if entity_index is None:
+                break
+            link_entity_to_evidence(  # TODO 这里原先把 connect 当参数传入，读起来会遮住“给实体和证据连边”这个动作，所以收回到局部作用域里
+                entity_index,
+                evidence_index,
+            )
+
+    ordered_evidence_medicines = get_ordered_evidence_medicines(case)[:max_evidences]
+    if train and not any(
+        medicine.drugid in gold_drugids
+        for medicine in ordered_evidence_medicines
+    ):
+        raise SkipTrainSample("截断后证据中不含答案药物。")
+
+    for medicine in ordered_evidence_medicines:
         evidence_index = get_or_add_evidence(medicine)
-        connect(
-            get_or_add_entity(
-                node_id=f"drug:{medicine.drugid}",
-                node_type="drug",
-                text=medicine.name,
-                label=1 if medicine.drugid in gold_drugids else 0,
-                drugid=medicine.drugid,
-            ),
-            evidence_index,
+        drug_entity_index = get_or_add_entity(
+            node_id=f"drug:{medicine.drugid}",
+            node_type="drug",
+            text=medicine.name,
+            label=1 if medicine.drugid in gold_drugids else 0,
+            drugid=medicine.drugid,
         )
+        if drug_entity_index is not None:
+            link_entity_to_evidence(drug_entity_index, evidence_index)
         append_entities_by_items(
             evidence_index=evidence_index,
             items=medicine.treat,
@@ -100,8 +149,6 @@ def build_gnn_train_sample(case: DrugRecCase) -> GNNTrainSample:
                 if treat.treat_id is not None
                 else f"treat:text:{(treat.treat or '').strip()}"
             ),
-            get_or_add_entity=get_or_add_entity,
-            connect=connect,
         )
         append_entities_by_items(
             evidence_index=evidence_index,
@@ -114,12 +161,8 @@ def build_gnn_train_sample(case: DrugRecCase) -> GNNTrainSample:
             get_node_id=lambda caution: (
                 f"caution:id:{caution.crowd_id}:{caution.caution_levelid}"
                 if caution.caution_levelid is not None
-                else "caution:text:"
-                f"{caution.crowd.strip()}:"
-                f"{(caution.caution_level or '').strip()}"
+                else f"caution:text:{caution.crowd.strip()}:{(caution.caution_level or '').strip()}"
             ),
-            get_or_add_entity=get_or_add_entity,
-            connect=connect,
         )
         append_entities_by_items(
             evidence_index=evidence_index,
@@ -131,8 +174,6 @@ def build_gnn_train_sample(case: DrugRecCase) -> GNNTrainSample:
                 if ingredient.ingredient_id is not None
                 else f"ingredient:text:{(ingredient.ingredient or '').strip()}"
             ),
-            get_or_add_entity=get_or_add_entity,
-            connect=connect,
         )
         append_entities_by_items(
             evidence_index=evidence_index,
@@ -140,24 +181,19 @@ def build_gnn_train_sample(case: DrugRecCase) -> GNNTrainSample:
             node_type="interaction",
             get_text=lambda interaction: interaction.name,
             get_node_id=lambda interaction: (
-                f"interaction:id:{interaction.interaction_id}:"
-                f"{interaction.name.strip()}"
+                f"interaction:id:{interaction.interaction_id}:{interaction.name.strip()}"
             ),
-            get_or_add_entity=get_or_add_entity,
-            connect=connect,
         )
+    if train and not any(entity.label == 1 for entity in entities):
+        raise SkipTrainSample("截断后答案实体被裁掉。")
     return GNNTrainSample(
         case=case,
         model_input=GNNModelInput(
             patient_text=build_patient_query_text(patient),
             entities=entities,
             evidences=evidences,
-            ent_to_ev=normalize_columns(
-                torch.tensor(ent_to_ev_rows, dtype=torch.float32)
-            ),
-            ev_to_ent=normalize_columns(
-                torch.tensor(ev_to_ent_rows, dtype=torch.float32)
-            ),
+            ent_to_ev=normalize_columns(torch.tensor(ent_to_ev_rows, dtype=torch.float32)),
+            ev_to_ent=normalize_columns(torch.tensor(ev_to_ent_rows, dtype=torch.float32)),
             entity_labels=torch.tensor(
                 [float(entity.label) for entity in entities],
                 dtype=torch.float32,
@@ -167,9 +203,8 @@ def build_gnn_train_sample(case: DrugRecCase) -> GNNTrainSample:
                 dtype=torch.float32,
             ),
             candidate_entity_indices=[
-                entity_index_by_node_id[f"drug:{candidate.drugid}"]
+                entity_index_by_node_id.get(f"drug:{candidate.drugid}")
                 for candidate in case.candidate_drugs
-                if f"drug:{candidate.drugid}" in entity_index_by_node_id
             ],
         ),
     )
@@ -179,7 +214,7 @@ def get_ordered_evidence_medicines(
     case: DrugRecCase,
 ) -> list[DrugRecMedicine]:
     ordered_medicines: list[DrugRecMedicine] = []
-    seen_drugids: set[str] = set()
+    seen_drugids: set[str] = set()  # 去重
     for medicine in case.patient.on_medicine:
         if medicine.drugid in seen_drugids:
             continue
@@ -190,36 +225,11 @@ def get_ordered_evidence_medicines(
             continue
         ordered_medicines.append(candidate.drug)
         seen_drugids.add(candidate.drugid)
-    return ordered_medicines
-
-
-def append_entities_by_items[T](
-    evidence_index: int,
-    items: list[T],
-    node_type: GNNNodeType,
-    get_text: Callable[[T], str],
-    get_node_id: Callable[[T], str],
-    get_or_add_entity: Callable[[str, GNNNodeType, str, int, str | None], int],
-    connect: Callable[[int, int], None],
-) -> None:
-    for item in items:
-        text = get_text(item).strip()
-        if not text:
-            continue
-        connect(
-            get_or_add_entity(
-                get_node_id(item),
-                node_type,
-                text,
-                0,
-                None,
-            ),
-            evidence_index,
-        )
+    return ordered_medicines  # NOTE 这里order是按加入顺序组织
 
 
 def build_patient_query_text(patient: DrugRecRecord) -> str:
-    return " || ".join(
+    return " || ".join(  # NOTE || 作为分隔符
         [
             str(patient.age),
             ",".join(patient.group),
@@ -234,26 +244,31 @@ def build_patient_query_text(patient: DrugRecRecord) -> str:
 
 
 def build_evidence_text(medicine: DrugRecMedicine) -> str:
-    treat_text = ", ".join(
-        treat.treat
-        for treat in medicine.treat
-        if treat.treat is not None
-    ) or "None"
-    caution_text = ", ".join(
-        build_caution_text(caution.crowd, caution.caution_level)
-        for caution in medicine.caution
-        if caution.crowd.strip()
-    ) or "None"
-    ingredient_text = ", ".join(
-        ingredient.ingredient
-        for ingredient in medicine.ingredients
-        if ingredient.ingredient is not None
-    ) or "None"
-    interaction_text = ", ".join(
-        interaction.name
-        for interaction in medicine.interaction
-        if interaction.name.strip()
-    ) or "None"
+    treat_text = (
+        ", ".join(treat.treat for treat in medicine.treat if treat.treat is not None) or "None"
+    )
+    caution_text = (
+        ", ".join(
+            build_caution_text(caution.crowd, caution.caution_level)
+            for caution in medicine.caution
+            if caution.crowd.strip()
+        )
+        or "None"
+    )
+    ingredient_text = (
+        ", ".join(
+            ingredient.ingredient
+            for ingredient in medicine.ingredients
+            if ingredient.ingredient is not None
+        )
+        or "None"
+    )
+    interaction_text = (
+        ", ".join(
+            interaction.name for interaction in medicine.interaction if interaction.name.strip()
+        )
+        or "None"
+    )
     return (
         f"药名:{medicine.name} || "
         f"治疗:{treat_text} || "
@@ -297,8 +312,9 @@ class FullEncoder(nn.Module):
         entity_max_length: int,
     ) -> None:
         super().__init__()
-        self.tokenizer = AutoTokenizer.from_pretrained(encoder_model_name)
-        self.model = AutoModel.from_pretrained(encoder_model_name)
+
+        self.tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(encoder_model_name)
+        self.model: PreTrainedModel = AutoModel.from_pretrained(encoder_model_name)
         self.patient_max_length = patient_max_length
         self.evidence_max_length = evidence_max_length
         self.entity_max_length = entity_max_length
@@ -324,10 +340,7 @@ class FullEncoder(nn.Module):
             device=device,
         )
         entity_mat = self.encode_texts(
-            [
-                f"{entity.text}{self.sep_token}{entity.node_type}"
-                for entity in model_input.entities
-            ],
+            [f"{entity.text}{self.sep_token}{entity.node_type}" for entity in model_input.entities],
             max_length=self.entity_max_length,
             device=device,
         )
@@ -339,26 +352,27 @@ class FullEncoder(nn.Module):
         max_length: int,
         device: torch.device,
     ) -> Float[torch.Tensor, "item hidden"]:
-        if not texts:
+        if not texts:  # 若一个病人既无候选药业务已用药则此处用 not texts
             hidden_size = int(self.model.config.hidden_size)
             return torch.empty((0, hidden_size), device=device)
         batch = self.tokenizer(
             texts,
             return_tensors="pt",
-            truncation=True,
+            truncation=True,  # 按 max_length 截断
             padding=True,
             max_length=max_length,
         )
-        batch = {key: value.to(device) for key, value in batch.items()}
+        batch = {key: value.to(device) for key, value in batch.items()}  # 转移设备
         outputs = self.model(**batch)
-        mask = batch["attention_mask"].unsqueeze(-1).to(
-            outputs.last_hidden_state.dtype
-        )
+        # NOTE [batch, seq_len] -> [batch, seq_len, hidden]
+        mask = batch["attention_mask"].unsqueeze(-1).to(outputs.last_hidden_state.dtype)
+        # NOTE 平均池化
         pooled = torch.sum(outputs.last_hidden_state * mask, dim=1)
         return pooled / torch.clamp(mask.sum(dim=1), min=1.0)
 
 
 class GNNModel(nn.Module):
+    # NOTE 只与 TraceDR 架构等价，实现细节有很大差异
     def __init__(
         self,
         hidden_size: int = 768,
@@ -383,6 +397,7 @@ class GNNModel(nn.Module):
             evidence_max_length=max_text_length,
             entity_max_length=entity_max_length,
         )
+        # NOTE 一大坨线性层
         self.ev_att_layers = nn.ModuleList(
             [nn.Linear(hidden_size, hidden_size) for _ in range(message_passing_steps)]
         )
@@ -395,6 +410,7 @@ class GNNModel(nn.Module):
         self.ent_msg_layers = nn.ModuleList(
             [nn.Linear(hidden_size, hidden_size) for _ in range(message_passing_steps)]
         )
+        # NOTE Bilinear 参数量更大也更容易过拟合
         self.answer_head = nn.Bilinear(hidden_size, hidden_size, 1)
         self.evidence_head = nn.Bilinear(hidden_size, hidden_size, 1)
         self.loss_fn = nn.BCEWithLogitsLoss()
@@ -426,7 +442,7 @@ class GNNModel(nn.Module):
                     ).squeeze(-1),
                 )
             )
-        return outputs
+        return outputs  # NOTE 不是求 list 的梯度而是 list 里元素的梯度
 
     def get_loss(
         self,
@@ -439,7 +455,7 @@ class GNNModel(nn.Module):
             model_inputs,
             outputs,
             strict=True,
-        ):
+        ):  # NOTE 因为这里不是单一标准任务，而是“每个样本两个任务、每个任务长度还可变、并且证据分支可能为空”的组合。
             entity_loss = self.loss_fn(
                 entity_logits,
                 model_input.entity_labels.to(device),
@@ -470,6 +486,7 @@ class GNNModel(nn.Module):
         }
 
     def run_message_passing(
+        # ANCHOR 以后写中期报告的以latex公式的形式和标准图神经网络过程做对比以加深我理解
         self,
         entity_mat: Float[torch.Tensor, "entity hidden"],
         evidence_mat: Float[torch.Tensor, "evidence hidden"],
@@ -487,23 +504,17 @@ class GNNModel(nn.Module):
             evidence_weights = normalize_rows(
                 (
                     ev_to_ent
-                    * F.softmax(ev_att_layer(evidence_mat) @ patient_vec, dim=0)
-                    .unsqueeze(-1)
+                    * F.softmax(ev_att_layer(evidence_mat) @ patient_vec, dim=0).unsqueeze(-1)
                 ).transpose(0, 1)
             )
-            entity_mat = F.relu(
-                ev_msg_layer(evidence_weights @ evidence_mat) + entity_mat
-            )
+            entity_mat = F.relu(ev_msg_layer(evidence_weights @ evidence_mat) + entity_mat)
             entity_weights = normalize_rows(
                 (
                     ent_to_ev
-                    * F.softmax(ent_att_layer(entity_mat) @ patient_vec, dim=0)
-                    .unsqueeze(-1)
+                    * F.softmax(ent_att_layer(entity_mat) @ patient_vec, dim=0).unsqueeze(-1)
                 ).transpose(0, 1)
             )
-            evidence_mat = F.relu(
-                ent_msg_layer(entity_weights @ entity_mat) + evidence_mat
-            )
+            evidence_mat = F.relu(ent_msg_layer(entity_weights @ entity_mat) + evidence_mat)
             entity_mat = F.dropout(
                 entity_mat,
                 p=self.dropout,

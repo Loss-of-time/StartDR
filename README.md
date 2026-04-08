@@ -104,6 +104,7 @@ uv run pyright
 
 - `ruff check` 负责 lint 与部分明显错误，不负责完整类型检查
 - `pyright` 负责类型检查，当前配置等价于 VS Code `python.analysis.typeCheckingMode = "standard"` 的命令行版本
+- `pyproject.toml` 已关闭 pyright 对第三方库源码的深度分析；本地 `.vscode/settings.json` 额外排除了 `.venv`、`misc`、`resource`、`output` 的编辑器级 Python 分析，`misc/` 下的 `TraceDR` 代码按只读参考处理，不参与日常诊断
 
 运行前至少需要准备：
 

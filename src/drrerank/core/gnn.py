@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from typing import cast
 
 import torch
 import torch.nn as nn
@@ -365,7 +366,8 @@ class FullEncoder(nn.Module):
         batch = {key: value.to(device) for key, value in batch.items()}  # 转移设备
         outputs = self.model(**batch)
         # NOTE [batch, seq_len] -> [batch, seq_len, hidden]
-        mask = batch["attention_mask"].unsqueeze(-1).to(outputs.last_hidden_state.dtype)
+        attention_mask = cast(torch.Tensor, batch["attention_mask"])
+        mask = attention_mask.unsqueeze(-1).to(outputs.last_hidden_state.dtype)
         # NOTE 平均池化
         pooled = torch.sum(outputs.last_hidden_state * mask, dim=1)
         return pooled / torch.clamp(mask.sum(dim=1), min=1.0)

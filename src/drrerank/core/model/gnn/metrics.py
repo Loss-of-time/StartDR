@@ -1,7 +1,8 @@
 from collections.abc import Sequence
 from dataclasses import fields
 
-from .schema import DrugRecCase, GNNMetrics, GNNRecResult
+from ...schema import DrugRecCase
+from .schema import GNNMetrics, GNNRecResult
 
 
 def get_ranked_drugids(

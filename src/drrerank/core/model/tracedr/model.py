@@ -32,7 +32,7 @@ class TraceDRForwardResult:
     entity_logits: Float[Tensor, "entity"]
     evidence_logits: Float[Tensor, "evidence"]
     loss: Tensor
-    entity_accuracy: float
+    # entity_accuracy: float
 
 
 class FullEncoder(nn.Module):
@@ -62,7 +62,10 @@ class FullEncoder(nn.Module):
         self.tokenizer: PreTrainedTokenizerBase = transformers.AutoTokenizer.from_pretrained(
             encoder_model_name
         )
-        self.model: PreTrainedModel = transformers.AutoModel.from_pretrained(encoder_model_name)
+        self.model: PreTrainedModel = transformers.AutoModel.from_pretrained(
+            encoder_model_name,
+            use_safetensors=False,
+        )
         self.sep_token = encoder_sep_token
 
         self.device = torch.device("cuda")
@@ -235,16 +238,16 @@ class MultitaskBilinearAnswering(nn.Module):
         masked_loss = raw_loss * mask
         return masked_loss.sum() / mask.sum().clamp(min=1.0)
 
-    def _get_masked_accuracy(
-        self,
-        logits: Float[Tensor, "item"],
-        labels: Tensor,
-        mask: Tensor,
-    ) -> float:
-        preds = (torch.sigmoid(logits) > 0.5).float()
-        correct = ((preds == labels.float()).float() * mask).sum()
-        total = mask.sum().clamp(min=1.0)
-        return float((correct / total).item())
+    # def _get_masked_accuracy(
+    #     self,
+    #     logits: Float[Tensor, "item"],
+    #     labels: Tensor,
+    #     mask: Tensor,
+    # ) -> float:
+    #     preds = (torch.sigmoid(logits) > 0.5).float()
+    #     correct = ((preds == labels.float()).float() * mask).sum()
+    #     total = mask.sum().clamp(min=1.0)
+    #     return float((correct / total).item())
 
     def forward(
         self,
@@ -289,21 +292,22 @@ class MultitaskBilinearAnswering(nn.Module):
         ANSWER_WEIGHT = 0.5
         EV_WEIGHT = 1 - ANSWER_WEIGHT
         loss += ANSWER_WEIGHT * answer_loss + EV_WEIGHT * evidence_loss
-        entity_accuracy = self._get_masked_accuracy(
-            answer_logits,
-            sample.entity_labels,
-            sample.entity_mask,
-        )
+        # entity_accuracy = self._get_masked_accuracy(
+        #     answer_logits,
+        #     sample.entity_labels,
+        #     sample.entity_mask,
+        # )
 
         return TraceDRForwardResult(
+            loss=loss,
             entity_logits=answer_logits,
             evidence_logits=ev_logits,
-            loss=loss,
-            entity_accuracy=entity_accuracy,
+            # entity_accuracy=entity_accuracy,
         )
 
 
 class HeterogeneousGNN(nn.Module):
+    # TODO 以后换用更多不同的图模型
     def __init__(
         self,
         emb_dimension: int = 768,

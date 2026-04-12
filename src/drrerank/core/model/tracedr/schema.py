@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Literal
 
 import numpy as np
@@ -48,3 +48,12 @@ class TraceDRModelSample:
     tsf: str
     question: str
     gold_answers: list[str]
+    def to_cuda(self) -> "TraceDRModelSample":
+        values: dict[str, object] = {}
+        for field in fields(self):
+            value = getattr(self, field.name)
+            if isinstance(value, Tensor):
+                values[field.name] = value.cuda()
+            else:
+                values[field.name] = value
+        return TraceDRModelSample(**values)

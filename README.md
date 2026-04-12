@@ -25,7 +25,6 @@ StartDR/
 │  │  └─ core/
 │  └─ drrerank/
 │     ├─ import_tracedr.py
-│     ├─ train.py
 │     └─ core/
 ├─ pyproject.toml
 └─ README.md
@@ -34,7 +33,7 @@ StartDR/
 约定：
 
 - `src/drretrieval/` 根目录只保留可运行入口
-- `src/drrerank/` 根目录只保留可运行入口
+- `src/drrerank/` 根目录只保留跨模型公共入口
 - 非可运行文件统一下沉到各自的 `core/`
 - 不再保留统一日志模块，运行信息统一使用 `print` 和 `tqdm`
 
@@ -69,6 +68,7 @@ StartDR/
 
 - `rerank-import-tracedr`
 - `rerank-train`
+- `rerank-tracedr-train`
 
 默认产物：
 
@@ -128,6 +128,7 @@ uv run retriever-eval --retriever dense --top-k 50 --output-name dense_test_k50
 
 ```powershell
 uv run rerank-train --train-input resource/patient_candidate/pyserini_bm25_top50/train.jsonl --dev-input resource/patient_candidate/pyserini_bm25_top50/dev.jsonl --output-name gnn_pyserini_top50 --epochs 5
+uv run rerank-tracedr-train --train-input resource/patient_candidate/tracedr_top50/train.jsonl --epochs 5
 ```
 
 如需直接把 `TraceDR` 的 `pkl` 候选集规范化为同风格 `jsonl`，可执行：
@@ -142,9 +143,14 @@ uv run rerank-train --train-input resource/patient_candidate/tracedr_top50/train
 说明：
 
 - `patient-candidates` 与 `rerank-import-tracedr` 最终都输出同一种 `{"people": ..., "top_k_drugs": ...}` `jsonl`
+- 当前项目所有 Hugging Face `AutoModel.from_pretrained(...)` 均固定使用 `use_safetensors=False`，关闭 safetensors 自动转换探测
 - `rerank-train` 直接读取该 `jsonl` 构图，不再经过 `gnn_data` 中间层
 - `rerank-train` 当前支持按 TraceDR 口径截断图规模：默认 `--max-evidences 50`、`--max-entities 100`
 - 训练集会跳过“截断后证据中无答案”或“答案实体被截掉”的样本；验证集不会跳过
+- `rerank-tracedr-train` 默认读取 `resource/patient_candidate/tracedr_top50/train.jsonl`
+- `rerank-train` 默认读取 `resource/patient_candidate/pyserini_bm25_top50/train.jsonl` 与 `dev.jsonl`
+- `rerank-train` 当前入口实现位于 `src/drrerank/core/model/gnn/train.py`
+- `rerank-tracedr-train` 当前入口实现位于 `src/drrerank/core/model/tracedr/train.py`
 
 ## 当前状态
 

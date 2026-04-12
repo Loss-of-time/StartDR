@@ -11,7 +11,7 @@ class ContinueWithNext(Exception):
 
 def build_model_sample(
     sample: TraceDRSample, train: bool = False, max_entities=100, max_evidences: int = 50
-) -> TraceDRModelSample:
+) -> TraceDRModelSample | None:
     tsf: str = _person_to_query(sample.people)
     topk_drugs = sample.top_k_drugs.values()
     gold_answers = [medicine.drugid for medicine in sample.people.medicine]
@@ -28,7 +28,8 @@ def build_model_sample(
     if train:
         has_answer = any(evidence.drugid in gold_answer_set for evidence in evidences)
         if not has_answer:
-            raise ContinueWithNext("No answers found.")
+            # raise ContinueWithNext("No answers found.")
+            return None
 
     # 从 neo4j 空间到数据集空间的映射
     entity_to_id: dict[TraceDRNodeId, int] = {}
@@ -170,7 +171,8 @@ def build_model_sample(
 
     # 训练时截断后若无答案则跳过
     if train and not torch.sum(entity_labels_tensor):
-        raise ContinueWithNext("Answer pruned via max_entities restriction")
+        # raise ContinueWithNext("Answer pruned via max_entities restriction")
+        return None
 
     # 归一化邻接矩阵
     ent_to_ev_dense = ent_to_ev_tensor.to_dense()

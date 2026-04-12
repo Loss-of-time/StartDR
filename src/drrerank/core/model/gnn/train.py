@@ -8,22 +8,17 @@ from pathlib import Path
 import torch
 from tqdm import tqdm
 
-from .core.gnn import GNNModel, SkipTrainSample, build_gnn_train_sample
-from .core.metrics import aggregate_gnn_metrics, get_gnn_metrics
-from .core.schema import (
-    GNNMetrics,
-    GNNRecResult,
-    GNNTrainSample,
-    RankedDrug,
-    RankedEvidence,
-    unstructure,
-)
-from .core.setting import (
-    DEFAULT_DEV_INPUT_PATH,
+from ...schema import RankedDrug, RankedEvidence, unstructure
+from ...setting import (
+    DEFAULT_GNN_DEV_INPUT_PATH,
+    DEFAULT_GNN_TRAIN_INPUT_PATH,
     DEFAULT_MODEL_OUTPUT_DIR,
-    DEFAULT_TRAIN_INPUT_PATH,
 )
-from .core.tracedr import load_tracedr_cases
+from ...tracedr import load_tracedr_cases
+from .data import SkipTrainSample, build_gnn_train_sample
+from .metrics import aggregate_gnn_metrics, get_gnn_metrics
+from .model import GNNModel
+from .schema import GNNMetrics, GNNRecResult, GNNTrainSample
 
 
 @dataclass(slots=True)
@@ -51,10 +46,10 @@ class TrainReport:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="训练 TraceDR 风格主模型。")
     parser.add_argument(
-        "--train-input", type=Path, default=DEFAULT_TRAIN_INPUT_PATH
+        "--train-input", type=Path, default=DEFAULT_GNN_TRAIN_INPUT_PATH
     )
     parser.add_argument(
-        "--dev-input", type=Path, default=DEFAULT_DEV_INPUT_PATH
+        "--dev-input", type=Path, default=DEFAULT_GNN_DEV_INPUT_PATH
     )
     parser.add_argument("--output-name", type=str, required=True)
     parser.add_argument("--epochs", type=int, default=5)
@@ -184,6 +179,7 @@ def evaluate_model(
                 )
                 metrics_list.append(get_gnn_metrics(sample.case, result))
     return aggregate_gnn_metrics(metrics_list)
+
 
 def load_train_samples(
     input_path: Path,

@@ -58,22 +58,12 @@ def get_corpus(
     drug_ids: list[str] = []
     lcut = jieba.lcut
     for drug in drugs:
-        treatments = [
-            row.treat
-            for row in drug.treat
-            if row.treat is not None
-        ]
+        treatments = [row.treat for row in drug.treat if row.treat is not None]
         cautions = [
-            f"{row.crowd}{row.caution_level}"
-            if row.caution_level
-            else row.crowd
+            f"{row.crowd}{row.caution_level}" if row.caution_level else row.crowd
             for row in drug.caution
         ]
-        ingredients = [
-            row.ingredient
-            for row in drug.ingredients
-            if row.ingredient is not None
-        ]
+        ingredients = [row.ingredient for row in drug.ingredients if row.ingredient is not None]
         document = (
             f"治疗:{', '.join(treatments) if treatments else 'None'}"
             f" || 禁用:{', '.join(cautions) if cautions else 'None'}"
@@ -93,38 +83,21 @@ def get_drug_docs(drugs: list[DrugRecMedicine]) -> list[str]:
     append = docs.append
     for drug in drugs:
         treatments = (
-            "、".join(
-                row.treat
-                for row in drug.treat
-                if row.treat is not None
-            )
+            "、".join(row.treat for row in drug.treat if row.treat is not None)
             if drug.treat
             else "None"
         )
-        append(
-            f"药品:{drug.name or 'None'}"
-            f" || 治疗:{treatments}"
-        )
+        append(f"药品:{drug.name or 'None'} || 治疗:{treatments}")
     return docs
 
 
 def build_pyserini_document(drug: DrugRecMedicine) -> str:
-    treatments = [
-        row.treat
-        for row in drug.treat
-        if row.treat is not None
-    ]
+    treatments = [row.treat for row in drug.treat if row.treat is not None]
     cautions = [
-        f"{row.crowd}{row.caution_level}"
-        if row.caution_level
-        else row.crowd
+        f"{row.crowd}{row.caution_level}" if row.caution_level else row.crowd
         for row in drug.caution
     ]
-    ingredients = [
-        row.ingredient
-        for row in drug.ingredients
-        if row.ingredient is not None
-    ]
+    ingredients = [row.ingredient for row in drug.ingredients if row.ingredient is not None]
     return (
         f"治疗:{', '.join(treatments) if treatments else 'None'}"
         f" || 禁用:{', '.join(cautions) if cautions else 'None'}"
@@ -146,7 +119,10 @@ def get_dense_embedding_cache_path() -> Path:
 @lru_cache(maxsize=1)
 def get_dense_encoder() -> tuple[PreTrainedTokenizerBase, PreTrainedModel]:
     tokenizer = AutoTokenizer.from_pretrained(DENSE_MODEL_ID)
-    model = AutoModel.from_pretrained(DENSE_MODEL_ID)
+    model = AutoModel.from_pretrained(
+        DENSE_MODEL_ID,
+        use_safetensors=False,
+    )
     return tokenizer, model
 
 
@@ -197,7 +173,7 @@ class BM25Retriever(Retriever):
         query = get_query_tokens(patient)
         if not query or top_k <= 0:
             return []
-        scores = self.bm25.get_scores(query)
+        scores = self.bm25.get_scores(query) # TODO 看看默认参数
         limit = min(top_k, len(self.drug_ids))
         top_indices = scores.argpartition(-limit)[-limit:]
         ranked_indices = top_indices[scores[top_indices].argsort()[::-1]]
@@ -260,7 +236,7 @@ class DenseRetriever(Retriever):
             range(0, len(self.drug_docs), batch_size),
             desc="编码药品向量",
         ):
-            batch_docs = self.drug_docs[start:start + batch_size]
+            batch_docs = self.drug_docs[start : start + batch_size]
             embeddings.append(self.encode_texts(batch_docs).cpu())
         drug_embeddings = torch.cat(embeddings, dim=0)
         torch.save(drug_embeddings, cache_path)
@@ -298,6 +274,7 @@ class DenseRetriever(Retriever):
         ]
 
 
+# TODO 找表现更好的原因
 class PyseriniBM25Retriever(Retriever):
     def __init__(
         self,

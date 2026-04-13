@@ -39,7 +39,6 @@ patient-candidates = "drretrieval.patient_candidates:main"
 retriever-eval = "drretrieval.retriever_eval:main"
 rerank-import-tracedr = "drrerank.import_tracedr:main"
 rerank-tracedr-train = "drrerank.core.model.tracedr.train:main"
-# rerank-train = "drrerank.core.model.gnn.train:main"
 
 [tool.ruff]
 line-length = 100

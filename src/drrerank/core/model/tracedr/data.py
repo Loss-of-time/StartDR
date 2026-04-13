@@ -12,6 +12,19 @@ class ContinueWithNext(Exception):
     pass
 
 
+def _deduplicate_medicines_by_drugid(
+    medicines: Sequence[DrugRecMedicine],
+) -> list[DrugRecMedicine]:
+    deduplicated_medicines: list[DrugRecMedicine] = []
+    seen_drug_ids: set[str] = set()
+    for medicine in medicines:
+        if medicine.drugid in seen_drug_ids:
+            continue
+        seen_drug_ids.add(medicine.drugid)
+        deduplicated_medicines.append(medicine)
+    return deduplicated_medicines
+
+
 def build_model_sample(
     sample: TraceDRSample, train: bool = False, max_entities=100, max_evidences: int = 50
 ) -> TraceDRModelSample | None:
@@ -19,14 +32,13 @@ def build_model_sample(
     topk_drugs = sample.top_k_drugs.values()
     gold_answers = [medicine.drugid for medicine in sample.people.medicine]
     gold_answer_set = set(gold_answers)
-    on_medicine = sample.people.on_medicine
-
     # evidence 是候选药物 entities 是药物有关属性
     evidences: list[DrugRecMedicine] = list()
-    evidences.extend(on_medicine)
+    evidences.extend(sample.people.on_medicine)
     evidences.extend(topk_drugs)
-    if len(evidences) > max_evidences - len(on_medicine):
-        evidences = evidences[: (max_evidences - len(on_medicine))]
+    evidences = _deduplicate_medicines_by_drugid(evidences)
+    if len(evidences) > max_evidences:
+        evidences = evidences[:max_evidences]
 
     if train:
         has_answer = any(evidence.drugid in gold_answer_set for evidence in evidences)

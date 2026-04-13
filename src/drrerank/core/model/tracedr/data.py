@@ -1,3 +1,6 @@
+from collections.abc import Sequence
+from typing import cast
+
 import numpy as np
 import torch
 
@@ -74,17 +77,20 @@ def build_model_sample(
             num_evidences += 1
 
         # 将药物自身加入 entity
-        if num_entities < (max_entities - 1):
-            entity_to_id[drug.drugid] = num_entities
-            id_to_entity[num_entities] = drug_entity
-            entities_list.append(drug_entity)
+        g_ent_id = entity_to_id.get(drug.drugid)
+        if g_ent_id is None:
+            if num_entities < (max_entities - 1):
+                g_ent_id = num_entities
+                entity_to_id[drug.drugid] = g_ent_id
+                id_to_entity[g_ent_id] = drug_entity
+                entities_list.append(drug_entity)
 
-            entity_labels[num_entities] = int(drug.drugid in gold_answer_set)
+                entity_labels[g_ent_id] = int(drug.drugid in gold_answer_set)
 
-            ent_to_ev[num_entities, g_ev_id] = 1
-            ev_to_ent[g_ev_id, num_entities] = 1
-
-            num_entities += 1
+                num_entities += 1
+        if g_ent_id is not None:
+            ent_to_ev[g_ent_id, g_ev_id] = 1
+            ev_to_ent[g_ev_id, g_ent_id] = 1
 
         # 添加其他 ent
         # 遍历所有 ent
@@ -196,8 +202,8 @@ def build_model_sample(
         ev_to_ent=ev_to_ent_dense,
         entity_labels=entity_labels_tensor,
         evidence_labels=evidence_labels_tensor,
-        id_to_entity=id_to_entity,
-        id_to_evidence=id_to_evidence,
+        id_to_entity=cast("Sequence[TraceDREntity | None]", id_to_entity),
+        id_to_evidence=cast("Sequence[DrugRecMedicine | None]", id_to_evidence),
         tsf=tsf,
         question=tsf,
         gold_answers=gold_answers,

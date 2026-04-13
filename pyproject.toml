@@ -7,7 +7,7 @@ name = "StartDR"
 version = "0.1.0"
 description = "DrugRec 检索与检索后精排训练的双子项目工程。"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "cattrs",
     "jaxtyping",
@@ -16,6 +16,7 @@ dependencies = [
     "pyright>=1.1.405",
     "pyserini",
     "rank-bm25",
+    "socksio",
     "tqdm",
     "torch",
     "transformers",
@@ -25,6 +26,7 @@ dependencies = [
 [tool.uv.sources]
 torch = [
     { index = "pytorch-cu126", marker = "sys_platform == 'win32'" },
+    { index = "pytorch-cu126", marker = "sys_platform == 'linux'" },
 ]
 
 [[tool.uv.index]]

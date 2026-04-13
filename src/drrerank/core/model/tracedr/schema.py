@@ -1,7 +1,7 @@
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, replace
+from collections.abc import Sequence
 from typing import Literal
 
-import numpy as np
 from jaxtyping import Float, Int
 from torch import Tensor
 
@@ -43,17 +43,18 @@ class TraceDRModelSample:
     ev_to_ent: EvidenceEntityMatrix
     entity_labels: EntityLabelTensor
     evidence_labels: EvidenceLabelTensor
-    id_to_entity: np.ndarray
-    id_to_evidence: np.ndarray
+    id_to_entity: Sequence[TraceDREntity | None]
+    id_to_evidence: Sequence[DrugRecMedicine | None]
     tsf: str
     question: str
     gold_answers: list[str]
     def to_cuda(self) -> "TraceDRModelSample":
-        values: dict[str, object] = {}
-        for field in fields(self):
-            value = getattr(self, field.name)
-            if isinstance(value, Tensor):
-                values[field.name] = value.cuda()
-            else:
-                values[field.name] = value
-        return TraceDRModelSample(**values)
+        return replace(
+            self,
+            entity_mask=self.entity_mask.cuda(),
+            evidence_mask=self.evidence_mask.cuda(),
+            ent_to_ev=self.ent_to_ev.cuda(),
+            ev_to_ent=self.ev_to_ent.cuda(),
+            entity_labels=self.entity_labels.cuda(),
+            evidence_labels=self.evidence_labels.cuda(),
+        )

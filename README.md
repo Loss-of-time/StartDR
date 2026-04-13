@@ -128,7 +128,7 @@ uv run retriever-eval --retriever dense --top-k 50 --output-name dense_test_k50
 
 ```powershell
 uv run rerank-train --train-input resource/patient_candidate/pyserini_bm25_top50/train.jsonl --dev-input resource/patient_candidate/pyserini_bm25_top50/dev.jsonl --output-name gnn_pyserini_top50 --epochs 5
-uv run rerank-tracedr-train --train-input resource/patient_candidate/tracedr_top50/train.jsonl --epochs 5
+uv run rerank-tracedr-train --train-input resource/patient_candidate/tracedr_top50/train.jsonl --dev-input resource/patient_candidate/tracedr_top50/dev.jsonl --output-name tracedr_top50 --epochs 5
 ```
 
 如需直接把 `TraceDR` 的 `pkl` 候选集规范化为同风格 `jsonl`，可执行：
@@ -144,6 +144,7 @@ uv run rerank-train --train-input resource/patient_candidate/tracedr_top50/train
 
 - `patient-candidates` 与 `rerank-import-tracedr` 最终都输出同一种 `{"people": ..., "top_k_drugs": ...}` `jsonl`
 - 当前项目所有 Hugging Face `AutoModel.from_pretrained(...)` 均固定使用 `use_safetensors=False`，关闭 safetensors 自动转换探测
+- 若在 WSL 代理环境下使用 Hugging Face 下载模型，项目依赖已包含 `socksio`，执行 `uv sync` 后即可为 `httpx` 提供 SOCKS 代理支持
 - `rerank-train` 直接读取该 `jsonl` 构图，不再经过 `gnn_data` 中间层
 - `rerank-train` 当前支持按 TraceDR 口径截断图规模：默认 `--max-evidences 50`、`--max-entities 100`
 - 训练集会跳过“截断后证据中无答案”或“答案实体被截掉”的样本；验证集不会跳过

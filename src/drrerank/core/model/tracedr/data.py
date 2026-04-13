@@ -108,7 +108,9 @@ def build_model_sample(
         # 遍历所有 ent
         new_entities: list[tuple[TraceDRNodeId, TraceDREntity]] = []
         for treat in drug.treat:
-            treat_label = treat.treat if treat.treat is not None else "None"
+            if treat.treat is None:
+                continue
+            treat_label = treat.treat
             treat_id = treat.treat_id if treat.treat_id is not None else treat_label
             new_entities.append((treat_label, TraceDREntity(treat_id, treat_label, "治疗")))
         for caution in drug.caution:
@@ -116,9 +118,9 @@ def build_model_sample(
                 (caution.crowd, TraceDREntity(caution.crowd_id, caution.crowd, "禁用"))
             )
         for ingredient in drug.ingredients:
-            ingredient_label = (
-                ingredient.ingredient if ingredient.ingredient is not None else "None"
-            )
+            if ingredient.ingredient is None:
+                continue
+            ingredient_label = ingredient.ingredient
             ingredient_id = (
                 ingredient.ingredient_id
                 if ingredient.ingredient_id is not None
@@ -220,9 +222,6 @@ def build_model_sample(
         question=tsf,
         gold_answers=gold_answers,
     )
-
-def load_dataset():
-    pass
 
 
 def _person_to_query(person: DrugRecRecord, delimiter: str = " || "):

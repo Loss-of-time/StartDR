@@ -1,21 +1,25 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
+
+type JsonObject = dict[str, object]
 
 
 def load_jsonl[T](
     path: Path,
-    parse_line: Callable[[object], T],
+    parse_line: Callable[[JsonObject], T],
     limit: int | None = None,
 ) -> list[T]:
+    # 修复 Pylance 将 json 行对象推断为 object 导致调用处无法按键索引的问题。
     with path.open(encoding="utf-8") as file:
         if limit is None:
-            return [parse_line(json.loads(line)) for line in file]
+            return [parse_line(cast(JsonObject, json.loads(line))) for line in file]
         rows: list[T] = []
         for index, line in enumerate(file):
             if index >= limit:
                 break
-            rows.append(parse_line(json.loads(line)))
+            rows.append(parse_line(cast(JsonObject, json.loads(line))))
         return rows
 
 

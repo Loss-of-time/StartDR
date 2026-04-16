@@ -35,10 +35,12 @@ url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [project.scripts]
+function-graph = "function_graph.function_graph:main"
 patient-candidates = "drretrieval.patient_candidates:main"
 retriever-eval = "drretrieval.retriever_eval:main"
 rerank-import-tracedr = "drrerank.import_tracedr:main"
 rerank-tracedr-train = "drrerank.core.model.tracedr.train:main"
+treeify-function-graph = "function_graph.treeify_function_graph:main"
 
 [tool.ruff]
 line-length = 100
@@ -58,4 +60,4 @@ reportMissingTypeStubs = "none"
 useLibraryCodeForTypes = false
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/drretrieval", "src/drrerank"]
+packages = ["src/drretrieval", "src/drrerank", "src/function_graph"]

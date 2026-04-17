@@ -19,6 +19,7 @@ dependencies = [
     "socksio",
     "tqdm",
     "torch",
+    "torch-geometric",
     "transformers",
     "viztracer>=1.1.1",
 ]
@@ -38,7 +39,10 @@ explicit = true
 function-graph = "function_graph.function_graph:main"
 patient-candidates = "drretrieval.patient_candidates:main"
 retriever-eval = "drretrieval.retriever_eval:main"
+rerank-gat-train = "drrerank.core.model.gat.train:main"
 rerank-import-tracedr = "drrerank.import_tracedr:main"
+rerank-kgd-export = "drrerank.core.model.kgd.export:main"
+rerank-kgd-train = "drrerank.core.model.kgd.train:main"
 rerank-tracedr-train = "drrerank.core.model.tracedr.train:main"
 treeify-function-graph = "function_graph.treeify_function_graph:main"
 

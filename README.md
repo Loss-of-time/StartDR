@@ -62,10 +62,14 @@ StartDR/
 职责：
 
 - 读取 TraceDR 风格候选集 `jsonl`
+- 导出 KGDNet 所需离线 `pkl`
 - 训练当前精排模型
 
 主要入口：
 
+- `rerank-kgd-export`
+- `rerank-kgd-train`
+- `rerank-gat-train`
 - `rerank-import-tracedr`
 - `rerank-tracedr-train`
 
@@ -104,6 +108,7 @@ uv run pyright
 - `ruff check` 负责 lint 与部分明显错误，不负责完整类型检查
 - `pyright` 负责类型检查，当前配置等价于 VS Code `python.analysis.typeCheckingMode = "standard"` 的命令行版本
 - `pyproject.toml` 已关闭 pyright 对第三方库源码的深度分析；本地 `.vscode/settings.json` 额外排除了 `.venv`、`misc`、`resource`、`output` 的编辑器级 Python 分析，`misc/` 下的 `TraceDR` 代码按只读参考处理，不参与日常诊断
+- `drrerank.core.model.kgd.runtime.get_ehr_data(device, input_dir)` 现已直接返回 `torch_geometric.data.Data` 图对象，供 KGDNet 运行时兼容层使用
 
 运行前至少需要准备：
 
@@ -126,6 +131,9 @@ uv run retriever-eval --retriever dense --top-k 50 --output-name dense_test_k50
 精排侧：
 
 ```powershell
+uv run rerank-kgd-export --train-input resource/patient_candidate/tracedr_top50/train.jsonl --dev-input resource/patient_candidate/tracedr_top50/dev.jsonl --test-input resource/patient_candidate/tracedr_top50/test.jsonl --output-dir output/kgd/tracedr_top50
+uv run rerank-kgd-train --input-dir output/kgd/tracedr_top50 --output-name kgd_top50 --epochs 5
+uv run rerank-gat-train --train-input resource/patient_candidate/tracedr_top50/train.jsonl --dev-input resource/patient_candidate/tracedr_top50/dev.jsonl --output-name gat_top50 --epochs 5
 uv run rerank-tracedr-train --train-input resource/patient_candidate/tracedr_top50/train.jsonl --dev-input resource/patient_candidate/tracedr_top50/dev.jsonl --output-name tracedr_top50 --epochs 5
 ```
 
@@ -140,10 +148,17 @@ uv run rerank-import-tracedr --split test
 说明：
 
 - `patient-candidates` 与 `rerank-import-tracedr` 最终都输出同一种 `{"people": ..., "top_k_drugs": ...}` `jsonl`
+- `rerank-kgd-export` 读取三份 TraceDR 风格候选集 `jsonl`，并将 KGDNet 所需 `pkl` 写入 `--output-dir`
+- `rerank-kgd-train` 读取 `rerank-kgd-export` 生成的离线目录，并输出 KGDNet 训练权重与指标
+- `rerank-gat-train` 直接读取 TraceDR 风格候选集 `jsonl`，输出 GAT 训练权重与指标
 - 当前项目所有 Hugging Face `AutoModel.from_pretrained(...)` 均固定使用 `use_safetensors=False`，关闭 safetensors 自动转换探测
 - 若在 WSL 代理环境下使用 Hugging Face 下载模型，项目依赖已包含 `socksio`，执行 `uv sync` 后即可为 `httpx` 提供 SOCKS 代理支持
 - `rerank-tracedr-train` 默认读取 `resource/patient_candidate/tracedr_top50/train.jsonl`
 - `rerank-tracedr-train` 当前入口实现位于 `src/drrerank/core/model/tracedr/train.py`
+- `rerank-kgd-export` 当前入口实现位于 `src/drrerank/core/model/kgd/export.py`
+- `rerank-kgd-train` 当前入口实现位于 `src/drrerank/core/model/kgd/train.py`
+- `rerank-gat-train` 当前入口实现位于 `src/drrerank/core/model/gat/train.py`
+- KGD 运行时构图入口位于 `src/drrerank/core/model/kgd/runtime.py`
 
 ## 当前状态
 

@@ -1,5 +1,5 @@
-from dataclasses import dataclass, replace
 from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from jaxtyping import Float, Int
@@ -48,6 +48,7 @@ class TraceDRModelSample:
     tsf: str
     question: str
     gold_answers: list[str]
+
     def to_cuda(self) -> "TraceDRModelSample":
         return replace(
             self,

@@ -55,10 +55,13 @@ MUTATION_METHOD_NAMES = {
     "update",
     "add",
 }
-POSITIONAL_CALLBACK_CALLEE_NAMES = {
-    "filter",
-    "map",
-    "reduce",
+POSITIONAL_CALLBACK_ARGUMENT_INDEXES: dict[str, tuple[int, ...]] = {
+    "filter": (0,),
+    "map": (0,),
+    "reduce": (0,),
+    # 目的：补齐项目内高阶 IO 工具的位置回调识别，避免 parse_line/serialize_row 形成假根节点。
+    "load_jsonl": (1,),
+    "write_jsonl": (2,),
 }
 CALLBACK_KEYWORD_NAMES = {
     "callback",
@@ -466,9 +469,10 @@ class CallVisitor(FunctionBodyVisitor):
     def _iter_callback_arguments(self, node: ast.Call) -> list[ast.expr]:
         callback_arguments: list[ast.expr] = []
         callee_leaf_name = dotted_name(node.func).rsplit(".", maxsplit=1)[-1]
-        # 目的：只在明显的高阶调用场景下记录回调，避免把普通参数误判成函数边。
-        if callee_leaf_name in POSITIONAL_CALLBACK_CALLEE_NAMES and node.args:
-            callback_arguments.append(node.args[0])
+        # 目的：只在明确声明的位置参数槽位上识别回调，避免把普通参数误判成函数边。
+        for callback_index in POSITIONAL_CALLBACK_ARGUMENT_INDEXES.get(callee_leaf_name, ()):
+            if callback_index < len(node.args):
+                callback_arguments.append(node.args[callback_index])
         for keyword in node.keywords:
             if keyword.arg in CALLBACK_KEYWORD_NAMES:
                 callback_arguments.append(keyword.value)

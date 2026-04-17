@@ -1,5 +1,5 @@
-from dataclasses import dataclass, replace
 from collections.abc import Sequence
+from dataclasses import dataclass, replace
 
 from jaxtyping import Float, Int
 from torch import Tensor

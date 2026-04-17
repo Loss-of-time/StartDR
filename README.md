@@ -67,16 +67,20 @@ StartDR/
 
 主要入口：
 
+- `function-graph`
+  读取单个 `.py` 文件时输出单文件函数图；读取目录时把目录内全部 `.py` 视为一个整体输出总函数图
 - `rerank-kgd-export`
 - `rerank-kgd-train`
 - `rerank-gat-train`
 - `rerank-import-tracedr`
 - `rerank-tracedr-train`
+- `treeify-function-graph`
 
 默认产物：
 
 - `output/model/*.pt`
 - `output/model/*.json`
+- `output/function_graph/<时间戳>/*`
 
 ## 资源目录
 
@@ -159,6 +163,10 @@ uv run rerank-import-tracedr --split test
 - `rerank-kgd-train` 当前入口实现位于 `src/drrerank/core/model/kgd/train.py`
 - `rerank-gat-train` 当前入口实现位于 `src/drrerank/core/model/gat/train.py`
 - KGD 运行时构图入口位于 `src/drrerank/core/model/kgd/runtime.py`
+- 函数图分析独立项目位于 `src/function_graph/`
+- `function-graph` 现在会在 `json` 与 `md` 产物中附带函数级重构建议，并区分读边界、写边界、状态变异三类 effect
+- `function-graph --source <目录>` 会把目录内全部 `.py` 模块视为一个整体分析，并尝试解析目录内模块之间的 `import` / `from ... import ...` 调用关系
+- `function-graph` 与 `treeify-function-graph` 默认会在 `output/function_graph/<时间戳>/` 下写入 `json`、`md`、`dot`、`svg` 产物，避免多次运行结果堆在同一层目录
 
 ## 当前状态
 

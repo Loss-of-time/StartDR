@@ -11,9 +11,9 @@ import torch.nn.functional as F
 from scipy.sparse import csr_matrix
 from torch import Tensor
 from torch_geometric.data import Data
-from tqdm import tqdm
 
 from ...io import load_pickle, load_pickle_rows
+from ..experiment.progress import build_progress
 from ..experiment.runner import ExperimentAdapter, run_training_experiment
 from ..experiment.schema import ComparableMetrics, ExperimentEvalResult
 from ..tracedr.metrics import TraceDRMetrics, aggregate_metrics, calculate_metrics
@@ -457,7 +457,8 @@ def evaluate_model(
     metrics_list: list[TraceDRMetrics] = []
 
     with torch.no_grad():
-        with tqdm(samples, desc="验证", leave=False) as progress:
+        # 目的：统一复用可自适应的进度输出，保证非 TTY 环境下验证阶段也有可见反馈。
+        with build_progress(samples, desc="验证", leave=False) as progress:
             for sample in progress:
                 result: KGDForwardResult = model(sample.patient_graphs, ddi_graph)
                 loss: float = float(compute_loss(result, sample).item())
@@ -585,7 +586,7 @@ class KGDTrainAdapter(ExperimentAdapter[TrainConfig, KGDTrainState, KGDSnapshot]
 
         losses: list[float] = []
         total_steps: int = total_epochs * len(state.train_samples)
-        with tqdm(
+        with build_progress(
             state.train_samples,
             desc=f"训练 epoch {epoch}/{total_epochs}",
             leave=False,

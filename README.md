@@ -171,6 +171,7 @@ uv run rerank-import-tracedr --split test
 - `rerank-kgd-train` 读取 `rerank-kgd-export` 生成的离线目录，并按 `--selection-metric` 输出最佳权重与指标
 - `rerank-gat-train` 直接读取 TraceDR 风格候选集 `jsonl`，按 `--selection-metric` 输出最佳权重与指标；可额外传入 `--test-input`
 - `rerank-compare-train` 会复用统一训练 runner，顺序执行多个模型并在 `output/model/` 下生成汇总对比报告
+- 当前 `drrerank` 训练入口在交互式终端下显示 `tqdm` 进度条；若运行环境不是 TTY（例如 `uv` 子进程日志面板、部分 IDE 终端采集面板），会自动退化为周期性 `print` 进度，避免训练过程没有可见反馈
 - 当前项目所有 Hugging Face `AutoModel.from_pretrained(...)` 均固定使用 `use_safetensors=False`，关闭 safetensors 自动转换探测
 - 若在 WSL 代理环境下使用 Hugging Face 下载模型，项目依赖已包含 `socksio`，执行 `uv sync` 后即可为 `httpx` 提供 SOCKS 代理支持
 - `rerank-tracedr-train` 默认读取 `resource/patient_candidate/tracedr_top50/train.jsonl`，并可额外传入 `--test-input`

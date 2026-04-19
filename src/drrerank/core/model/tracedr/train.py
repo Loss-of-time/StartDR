@@ -6,11 +6,11 @@ from pathlib import Path
 
 import torch
 from torch import Tensor
-from tqdm import tqdm
 
 from ...schema import DrugRecMedicine
 from ...setting import DEFAULT_TRACEDR_DEV_INPUT_PATH, DEFAULT_TRACEDR_TRAIN_INPUT_PATH
 from ...tracedr import load_tracedr_samples
+from ..experiment.progress import build_progress
 from ..experiment.runner import ExperimentAdapter, run_training_experiment
 from ..experiment.schema import ComparableMetrics, ExperimentEvalResult
 from .data import build_model_sample
@@ -175,7 +175,8 @@ def evaluate_model(
     metrics_list: list[TraceDRMetrics] = []
 
     with torch.no_grad():
-        with tqdm(samples, desc="验证", leave=False) as progress:
+        # 目的：统一复用可自适应的进度输出，保证非 TTY 环境下验证阶段也有可见反馈。
+        with build_progress(samples, desc="验证", leave=False) as progress:
             for sample in progress:
                 cuda_sample: TraceDRModelSample = sample.to_cuda()
                 result: TraceDRForwardResult = model(cuda_sample)
@@ -296,7 +297,7 @@ class TraceDRTrainAdapter(ExperimentAdapter[TrainConfig, TraceDRTrainState, Trac
 
         losses: list[float] = []
         total_steps: int = total_epochs * len(state.train_samples)
-        with tqdm(
+        with build_progress(
             state.train_samples,
             desc=f"训练 epoch {epoch}/{total_epochs}",
             leave=False,

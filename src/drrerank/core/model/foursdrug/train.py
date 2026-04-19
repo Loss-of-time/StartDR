@@ -11,9 +11,9 @@ import torch
 import torch.nn.functional as F
 from scipy.sparse import csr_matrix
 from torch import Tensor
-from tqdm import tqdm
 
 from ...io import load_pickle
+from ..experiment.progress import build_progress
 from ..experiment.runner import ExperimentAdapter, run_training_experiment
 from ..experiment.schema import ComparableMetrics, ExperimentEvalResult
 from .export import build_batched_training_data
@@ -283,31 +283,33 @@ def evaluate_model(
     model.eval()
     metrics_list: list[FourSDrugMetrics] = []
     with torch.no_grad():
-        row: list[list[int]]
-        for row in tqdm(rows, desc="验证", leave=False):
-            symptoms: Tensor = torch.tensor([row[0]], dtype=torch.long, device=device)
-            target: Tensor = torch.zeros(
-                (1, model.config.medicine_vocab_size),
-                dtype=torch.float32,
-                device=device,
-            )
-            medicine_ids: list[int] = list(dict.fromkeys(row[2]))
-            if medicine_ids:
-                target[0, np.asarray(medicine_ids, dtype=np.int64) - 1] = 1.0
-            logits: Tensor = model.predict_logits(symptoms)
-            probabilities: Tensor = torch.sigmoid(logits)
-            loss: float = float(
-                F.binary_cross_entropy_with_logits(logits, target).item(),
-            )
-            metrics_list.append(
-                calculate_metrics(
-                    probabilities=probabilities[0].detach().cpu().numpy(),
-                    gold_drug_ids=medicine_ids,
-                    ddi_adj=ddi_adj,
-                    threshold=threshold,
-                    loss=loss,
-                ),
-            )
+        # 目的：统一复用可自适应的进度输出，保证非 TTY 环境下验证阶段也有可见反馈。
+        with build_progress(rows, desc="验证", leave=False) as progress:
+            row: list[list[int]]
+            for row in progress:
+                symptoms: Tensor = torch.tensor([row[0]], dtype=torch.long, device=device)
+                target: Tensor = torch.zeros(
+                    (1, model.config.medicine_vocab_size),
+                    dtype=torch.float32,
+                    device=device,
+                )
+                medicine_ids: list[int] = list(dict.fromkeys(row[2]))
+                if medicine_ids:
+                    target[0, np.asarray(medicine_ids, dtype=np.int64) - 1] = 1.0
+                logits: Tensor = model.predict_logits(symptoms)
+                probabilities: Tensor = torch.sigmoid(logits)
+                loss: float = float(
+                    F.binary_cross_entropy_with_logits(logits, target).item(),
+                )
+                metrics_list.append(
+                    calculate_metrics(
+                        probabilities=probabilities[0].detach().cpu().numpy(),
+                        gold_drug_ids=medicine_ids,
+                        ddi_adj=ddi_adj,
+                        threshold=threshold,
+                        loss=loss,
+                    ),
+                )
     model.train()
     return aggregate_metrics(metrics_list)
 
@@ -390,35 +392,34 @@ class FourSDrugTrainAdapter(
         state.model.train()
         batch_losses: list[float] = []
         total_steps: int = total_epochs * len(state.loaded_data.train_batches)
-        progress = tqdm(
+        with build_progress(
             state.loaded_data.train_batches,
             desc=f"训练 epoch {epoch}/{total_epochs}",
             leave=False,
-        )
-        batch_index: int
-        batch: FourSDrugTrainBatch
-        for batch_index, batch in enumerate(progress, start=1):
-            state.optimizer.zero_grad(set_to_none=True)
-            result: FourSDrugForwardResult = state.model(
-                symptoms=batch.symptoms,
-                drugs=batch.drugs,
-                similar_indices=batch.similar_indices,
-            )
-            loss_tensor: Tensor = compute_loss(
-                result=result,
-                drugs=batch.drugs,
-                alpha=state.config.alpha,
-                beta=state.config.beta,
-            )
-            loss_tensor.backward()
-            torch.nn.utils.clip_grad_norm_(state.model.parameters(), max_norm=1.0)
-            state.optimizer.step()
+        ) as progress:
+            batch_index: int
+            batch: FourSDrugTrainBatch
+            for batch_index, batch in enumerate(progress, start=1):
+                state.optimizer.zero_grad(set_to_none=True)
+                result: FourSDrugForwardResult = state.model(
+                    symptoms=batch.symptoms,
+                    drugs=batch.drugs,
+                    similar_indices=batch.similar_indices,
+                )
+                loss_tensor: Tensor = compute_loss(
+                    result=result,
+                    drugs=batch.drugs,
+                    alpha=state.config.alpha,
+                    beta=state.config.beta,
+                )
+                loss_tensor.backward()
+                torch.nn.utils.clip_grad_norm_(state.model.parameters(), max_norm=1.0)
+                state.optimizer.step()
 
-            loss: float = float(loss_tensor.item())
-            batch_losses.append(loss)
-            global_step: int = (epoch - 1) * len(state.loaded_data.train_batches) + batch_index
-            progress.set_postfix_str(f"step={global_step}/{total_steps} loss={loss:.6f}")
-        progress.close()
+                loss: float = float(loss_tensor.item())
+                batch_losses.append(loss)
+                global_step: int = (epoch - 1) * len(state.loaded_data.train_batches) + batch_index
+                progress.set_postfix_str(f"step={global_step}/{total_steps} loss={loss:.6f}")
         return sum(batch_losses) / len(batch_losses)
 
     def evaluate(self, state: FourSDrugTrainState, split: str) -> ExperimentEvalResult:

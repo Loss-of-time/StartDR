@@ -9,7 +9,7 @@ import torch
 from scipy.sparse import csr_matrix
 from torch_geometric.data import Data
 
-from ...io import load_pickle
+from ...io import load_pickle, load_pickle_rows
 from .common import (
     KGDAdmissionInfo,
     KGDEHRGraphs,
@@ -96,12 +96,9 @@ def load_kgd_runtime_artifacts(input_dir: Path) -> KGDRuntimeArtifacts:
     )
     with input_paths.voc_final.open("rb") as file:
         raw_voc = cast(dict[str, object], dill.load(file))
-    with input_paths.data_train.open("rb") as file:
-        data_train = cast(list[list[list[int]]], dill.load(file))
-    with input_paths.data_test.open("rb") as file:
-        data_test = cast(list[list[list[int]]], dill.load(file))
-    with input_paths.data_eval.open("rb") as file:
-        data_eval = cast(list[list[list[int]]], dill.load(file))
+    data_train: list[list[list[int]]] = load_pickle_rows(input_paths.data_train)
+    data_test: list[list[list[int]]] = load_pickle_rows(input_paths.data_test)
+    data_eval: list[list[list[int]]] = load_pickle_rows(input_paths.data_eval)
     return KGDRuntimeArtifacts(
         ehr_records=data_train + data_test + data_eval,
         diag_adj=cast(csr_matrix, load_pickle(input_paths.diag_adj)),

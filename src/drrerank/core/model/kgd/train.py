@@ -1,7 +1,6 @@
 """KGDNet 精排模型训练入口。"""
 
 import argparse
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -14,9 +13,9 @@ from torch import Tensor
 from torch_geometric.data import Data
 from tqdm import tqdm
 
-from ...io import load_pickle
-from ...schema import unstructure
-from ...setting import DEFAULT_MODEL_OUTPUT_DIR
+from ...io import load_pickle, load_pickle_rows
+from ..experiment.runner import ExperimentAdapter, run_training_experiment
+from ..experiment.schema import ComparableMetrics, ExperimentEvalResult
 from ..tracedr.metrics import TraceDRMetrics, aggregate_metrics, calculate_metrics
 from .common import KGDInputPaths, KGDVocabulary, KGDVocFile, sparse_matrix_to_edge_index
 from .model import KGDNet
@@ -27,6 +26,8 @@ from .runtime import (
     build_patient_info,
 )
 from .schema import KGDForwardResult, KGDModelConfig
+
+type KGDSnapshot = dict[str, Tensor]
 
 
 @dataclass(slots=True)
@@ -39,6 +40,8 @@ class TrainConfig:
         epochs: 训练轮数。
         train_limit: 训练集样本上限。
         dev_limit: 验证集样本上限。
+        test_limit: 测试集样本上限。
+        selection_metric: 最佳轮次选择指标。
     """
 
     input_dir: Path
@@ -46,6 +49,8 @@ class TrainConfig:
     epochs: int
     train_limit: int | None = None
     dev_limit: int | None = None
+    test_limit: int | None = None
+    selection_metric: str = "mrr"
 
 
 @dataclass(slots=True)
@@ -69,7 +74,8 @@ class TrainEpochResult:
     mrr: float
     h_at_5: float
     answer_presence: float
-    jaccard: float
+    ddi_rate: float
+    jaccard_similarity: float
     precision_at_5: float
     recall_at_5: float
     f1_at_5: float
@@ -89,6 +95,7 @@ class KGDSharedContext:
 
     clinical_edges: dict[tuple[str, str, str], dict[str, int | Tensor]]
     ddi_graph: Data
+    ddi_adj: csr_matrix
     medicine_vocab: KGDVocabulary
     num_clinical_nodes: int
     num_med_nodes: int
@@ -105,6 +112,20 @@ class KGDTrainSample:
     gold_answers: list[str]
 
 
+@dataclass(slots=True)
+class KGDTrainState:
+    """KGD 统一 runner 需要的状态。"""
+
+    model: KGDNet
+    optimizer: torch.optim.Optimizer
+    ddi_graph: Data
+    ddi_adj: csr_matrix
+    medicine_vocab: KGDVocabulary
+    train_samples: list[KGDTrainSample]
+    dev_samples: list[KGDTrainSample]
+    test_samples: list[KGDTrainSample]
+
+
 def parse_args() -> argparse.Namespace:
     """解析命令行参数。
 
@@ -118,6 +139,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--train-limit", type=int, default=None)
     parser.add_argument("--dev-limit", type=int, default=None)
+    parser.add_argument("--test-limit", type=int, default=None)
+    parser.add_argument("--selection-metric", type=str, default="mrr")
     return parser.parse_args()
 
 
@@ -187,11 +210,8 @@ def load_split_records(
         索引化病例列表。
     """
 
-    with split_path.open("rb") as file:
-        records: list[list[list[int]]] = cast(list[list[list[int]]], dill.load(file))
-    if limit is None:
-        return records
-    return records[:limit]
+    # 目的：兼容旧版整表 `list` 文件与新版逐条 pickle 流，避免导出阶段先把整份 split 堆进内存。
+    return load_pickle_rows(split_path, limit)
 
 
 def build_shared_context(
@@ -241,6 +261,7 @@ def build_shared_context(
     return KGDSharedContext(
         clinical_edges=clinical_edges,
         ddi_graph=ddi_graph,
+        ddi_adj=ddi_adj,
         medicine_vocab=vocabulary.med_voc,
         num_clinical_nodes=num_clinical_nodes,
         num_med_nodes=num_med_nodes,
@@ -416,6 +437,7 @@ def evaluate_model(
     model: KGDNet,
     samples: list[KGDTrainSample],
     ddi_graph: Data,
+    ddi_adj: csr_matrix,
     medicine_vocab: KGDVocabulary,
 ) -> TraceDRMetrics:
     """执行验证集评估。
@@ -449,6 +471,8 @@ def evaluate_model(
                     answers=ranked_answers,
                     gold_answers=sample.gold_answers,
                     k=5,
+                    ddi_adj=ddi_adj,
+                    drugid_to_index=medicine_vocab.word2idx,
                 )
                 losses.append(loss)
                 metrics_list.append(metrics)
@@ -465,11 +489,163 @@ def evaluate_model(
         mrr=aggregated_metrics.mrr,
         h_at_5=aggregated_metrics.h_at_5,
         answer_presence=aggregated_metrics.answer_presence,
-        jaccard=aggregated_metrics.jaccard,
+        ddi_rate=aggregated_metrics.ddi_rate,
+        jaccard_similarity=aggregated_metrics.jaccard_similarity,
         precision_at_5=aggregated_metrics.precision_at_5,
         recall_at_5=aggregated_metrics.recall_at_5,
         f1_at_5=aggregated_metrics.f1_at_5,
     )
+
+
+def build_eval_result(metrics: TraceDRMetrics) -> ExperimentEvalResult:
+    """把 KGD 指标映射到统一评测结构。
+
+    Args:
+        metrics: KGD 原始指标。
+
+    Returns:
+        统一评测结果。
+    """
+
+    return ExperimentEvalResult(
+        loss=metrics.loss,
+        comparable_metrics=ComparableMetrics(
+            p_at_1=metrics.p_at_1,
+            mrr=metrics.mrr,
+            hit_at_5=metrics.h_at_5,
+            precision_at_5=metrics.precision_at_5,
+            recall_at_5=metrics.recall_at_5,
+            f1_at_5=metrics.f1_at_5,
+        ),
+        extra_metrics={
+            "answer_presence": metrics.answer_presence,
+            "ddi_rate": metrics.ddi_rate,
+            "jaccard_similarity": metrics.jaccard_similarity,
+        },
+    )
+
+
+class KGDTrainAdapter(ExperimentAdapter[TrainConfig, KGDTrainState, KGDSnapshot]):
+    """KGD 统一训练适配器。"""
+
+    experiment_name: str = "kgd"
+
+    def setup(self, config: TrainConfig) -> KGDTrainState:
+        """构造 KGD 训练状态。"""
+
+        device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        input_paths: KGDInputPaths = build_input_paths(config.input_dir)
+        context: KGDSharedContext = build_shared_context(config.input_dir, device)
+        train_records: list[list[list[int]]] = load_split_records(
+            input_paths.data_train,
+            config.train_limit,
+        )
+        dev_records: list[list[list[int]]] = load_split_records(
+            input_paths.data_eval,
+            config.dev_limit,
+        )
+        train_samples: list[KGDTrainSample] = build_dataset(train_records, context, device)
+        dev_samples: list[KGDTrainSample] = build_dataset(dev_records, context, device)
+        test_samples: list[KGDTrainSample] = []
+        if input_paths.data_test.exists():
+            test_records: list[list[list[int]]] = load_split_records(
+                input_paths.data_test,
+                config.test_limit,
+            )
+            test_samples = build_dataset(test_records, context, device)
+        if not train_samples:
+            raise ValueError("训练集为空，无法执行 KGD 训练。")
+        if not dev_samples:
+            raise ValueError("验证集为空，无法执行 KGD 评估。")
+
+        model_config: KGDModelConfig = KGDModelConfig(
+            clinical_vocab_size=context.num_clinical_nodes,
+            medicine_vocab_size=context.num_med_nodes,
+        )
+        model: KGDNet = KGDNet(model_config).to(device)
+        model.train()
+        optimizer: torch.optim.Optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=1e-4,
+            weight_decay=0.01,
+        )
+        return KGDTrainState(
+            model=model,
+            optimizer=optimizer,
+            ddi_graph=context.ddi_graph,
+            ddi_adj=context.ddi_adj,
+            medicine_vocab=context.medicine_vocab,
+            train_samples=train_samples,
+            dev_samples=dev_samples,
+            test_samples=test_samples,
+        )
+
+    def train_epoch(self, state: KGDTrainState, epoch: int, total_epochs: int) -> float:
+        """执行单轮 KGD 训练。"""
+
+        losses: list[float] = []
+        total_steps: int = total_epochs * len(state.train_samples)
+        with tqdm(
+            state.train_samples,
+            desc=f"训练 epoch {epoch}/{total_epochs}",
+            leave=False,
+        ) as progress:
+            sample_idx: int
+            sample: KGDTrainSample
+            for sample_idx, sample in enumerate(progress, start=1):
+                state.optimizer.zero_grad(set_to_none=True)
+                result: KGDForwardResult = state.model(sample.patient_graphs, state.ddi_graph)
+                loss_tensor: Tensor = compute_loss(result, sample)
+                loss_tensor.backward()
+                state.optimizer.step()
+
+                loss: float = float(loss_tensor.item())
+                global_step: int = (epoch - 1) * len(state.train_samples) + sample_idx
+                losses.append(loss)
+                progress.set_postfix_str(f"step={global_step}/{total_steps} loss={loss:.6f}")
+        return sum(losses) / len(losses)
+
+    def evaluate(self, state: KGDTrainState, split: str) -> ExperimentEvalResult:
+        """执行指定切分的 KGD 评测。"""
+
+        samples: list[KGDTrainSample]
+        if split == "dev":
+            samples = state.dev_samples
+        else:
+            samples = state.test_samples
+        metrics: TraceDRMetrics = evaluate_model(
+            model=state.model,
+            samples=samples,
+            ddi_graph=state.ddi_graph,
+            ddi_adj=state.ddi_adj,
+            medicine_vocab=state.medicine_vocab,
+        )
+        return build_eval_result(metrics)
+
+    def has_split(self, state: KGDTrainState, split: str) -> bool:
+        """判断指定切分是否存在。"""
+
+        if split == "test":
+            return bool(state.test_samples)
+        return True
+
+    def capture_snapshot(self, state: KGDTrainState) -> KGDSnapshot:
+        """捕获当前最佳权重。"""
+
+        return {
+            key: value.detach().cpu().clone() for key, value in state.model.state_dict().items()
+        }
+
+    def restore_snapshot(self, state: KGDTrainState, snapshot: KGDSnapshot) -> None:
+        """恢复最佳权重。"""
+
+        state.model.load_state_dict(snapshot)
+
+    def export_checkpoint(self, state: KGDTrainState, output_path: Path) -> None:
+        """导出 KGD checkpoint。"""
+
+        # 目的：统一导出最佳轮次权重，保证 KGD 可直接参与同口径对比实验。
+        torch.save(state.model.state_dict(), output_path)
 
 
 def train(config: TrainConfig) -> None:
@@ -479,111 +655,7 @@ def train(config: TrainConfig) -> None:
         config: 训练配置。
     """
 
-    device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    input_paths: KGDInputPaths = build_input_paths(config.input_dir)
-    context: KGDSharedContext = build_shared_context(config.input_dir, device)
-    train_records: list[list[list[int]]] = load_split_records(
-        input_paths.data_train,
-        config.train_limit,
-    )
-    dev_records: list[list[list[int]]] = load_split_records(
-        input_paths.data_eval,
-        config.dev_limit,
-    )
-    train_samples: list[KGDTrainSample] = build_dataset(train_records, context, device)
-    dev_samples: list[KGDTrainSample] = build_dataset(dev_records, context, device)
-    if not train_samples:
-        raise ValueError("训练集为空，无法执行 KGD 训练。")
-    if not dev_samples:
-        raise ValueError("验证集为空，无法执行 KGD 评估。")
-
-    model_config: KGDModelConfig = KGDModelConfig(
-        clinical_vocab_size=context.num_clinical_nodes,
-        medicine_vocab_size=context.num_med_nodes,
-    )
-    model: KGDNet = KGDNet(model_config).to(device)
-    model.train()
-    optimizer: torch.optim.Optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=1e-4,
-        weight_decay=0.01,
-    )
-
-    DEFAULT_MODEL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    report_path: Path = DEFAULT_MODEL_OUTPUT_DIR / f"{config.output_name}.json"
-    state_dict_path: Path = DEFAULT_MODEL_OUTPUT_DIR / f"{config.output_name}.pt"
-
-    total_steps: int = config.epochs * len(train_samples)
-    epoch_results: list[TrainEpochResult] = []
-
-    for epoch in range(config.epochs):
-        losses: list[float] = []
-        with tqdm(
-            train_samples,
-            desc=f"训练 epoch {epoch + 1}/{config.epochs}",
-            leave=False,
-        ) as progress:
-            for sample_idx, sample in enumerate(progress, start=1):
-                optimizer.zero_grad(set_to_none=True)
-                result: KGDForwardResult = model(sample.patient_graphs, context.ddi_graph)
-                loss_tensor: Tensor = compute_loss(result, sample)
-                loss_tensor.backward()
-                optimizer.step()
-
-                loss: float = float(loss_tensor.item())
-                global_step: int = epoch * len(train_samples) + sample_idx
-                losses.append(loss)
-                progress.set_postfix_str(f"step={global_step}/{total_steps} loss={loss:.6f}")
-
-        train_loss: float = sum(losses) / len(losses)
-        dev_metrics: TraceDRMetrics = evaluate_model(
-            model=model,
-            samples=dev_samples,
-            ddi_graph=context.ddi_graph,
-            medicine_vocab=context.medicine_vocab,
-        )
-        epoch_results.append(
-            TrainEpochResult(
-                epoch=epoch + 1,
-                train_loss=train_loss,
-                dev_loss=dev_metrics.loss,
-                p_at_1=dev_metrics.p_at_1,
-                mrr=dev_metrics.mrr,
-                h_at_5=dev_metrics.h_at_5,
-                answer_presence=dev_metrics.answer_presence,
-                jaccard=dev_metrics.jaccard,
-                precision_at_5=dev_metrics.precision_at_5,
-                recall_at_5=dev_metrics.recall_at_5,
-                f1_at_5=dev_metrics.f1_at_5,
-            )
-        )
-        print(f"epoch={epoch + 1} train_loss={train_loss:.6f}")
-        print(
-            " ".join(
-                [
-                    f"epoch={epoch + 1}",
-                    f"dev_loss={dev_metrics.loss:.6f}",
-                    f"p_at_1={dev_metrics.p_at_1:.6f}",
-                    f"mrr={dev_metrics.mrr:.6f}",
-                    f"h_at_5={dev_metrics.h_at_5:.6f}",
-                    f"precision_at_5={dev_metrics.precision_at_5:.6f}",
-                    f"recall_at_5={dev_metrics.recall_at_5:.6f}",
-                    f"f1_at_5={dev_metrics.f1_at_5:.6f}",
-                    f"jaccard={dev_metrics.jaccard:.6f}",
-                ]
-            )
-        )
-
-    report: TrainReport = TrainReport(
-        output_name=config.output_name,
-        epochs=epoch_results,
-    )
-    # 目的：训练入口同时落盘指标和权重，便于后续直接复现烟测结果。
-    torch.save(model.state_dict(), state_dict_path)
-    with report_path.open("w", encoding="utf-8") as file:
-        json.dump(unstructure(report), file, ensure_ascii=False, indent=2)
-    print(f"训练完成，模型已写入: {state_dict_path.resolve()}")
-    print(f"训练完成，报告已写入: {report_path.resolve()}")
+    run_training_experiment(config, KGDTrainAdapter())
 
 
 def main() -> None:
@@ -597,6 +669,8 @@ def main() -> None:
             epochs=args.epochs,
             train_limit=args.train_limit,
             dev_limit=args.dev_limit,
+            test_limit=args.test_limit,
+            selection_metric=args.selection_metric,
         )
     )
 

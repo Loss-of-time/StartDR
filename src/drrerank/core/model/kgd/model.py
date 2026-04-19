@@ -2,6 +2,7 @@
 
 import math
 from collections.abc import Sequence
+from typing import cast
 
 import torch
 import torch.nn.functional as F
@@ -240,7 +241,9 @@ class AdmissionSequenceEncoder(nn.Module):
     def forward(self, embeddings: Sequence[HiddenEmbeddings]) -> Float[Tensor, "step hidden"]:
         """逐步编码 admission 序列。"""
 
-        device: torch.device = self.gru.weight_ih_l0.device
+        # 目的：通过已注册参数获取设备，避免静态检查将模块属性推断为宽泛联合类型。
+        gru_parameter: Tensor = next(self.gru.parameters())
+        device: torch.device = gru_parameter.device
         hidden_state: Float[Tensor, "layer batch hidden"] = self.init_hidden(1, device)
         step_outputs: list[HiddenEmbeddings] = []
 
@@ -274,9 +277,11 @@ class FusionConv(nn.Module):
 
         super().__init__()
         self.initial_conv = nn.Conv1d(input_dim, hidden_dim, kernel_size=1)
-        self.hidden_layers = nn.ModuleList(
+        # 目的：显式收窄 ModuleList 元素类型，避免静态检查把 layer 推断成宽泛 Module。
+        hidden_layers: list[nn.Conv1d] = [
             nn.Conv1d(hidden_dim, hidden_dim, kernel_size=1) for _ in range(num_layers)
-        )
+        ]
+        self.hidden_layers = nn.ModuleList(hidden_layers)
         self.final_conv = nn.Conv1d(hidden_dim, output_dim, kernel_size=1)
         self.activation = nn.ReLU()
         self.pooling = nn.AdaptiveAvgPool1d(1)
@@ -286,19 +291,26 @@ class FusionConv(nn.Module):
         """初始化参数。"""
 
         nn.init.xavier_uniform_(self.initial_conv.weight)
-        nn.init.zeros_(self.initial_conv.bias)
-        for layer in self.hidden_layers:
+        if self.initial_conv.bias is not None:
+            nn.init.zeros_(self.initial_conv.bias)
+        for hidden_layer in self.hidden_layers:
+            # 目的：逐层收窄为 Conv1d，消除 ModuleList 迭代时的宽泛类型。
+            layer: nn.Conv1d = cast(nn.Conv1d, hidden_layer)
             nn.init.xavier_uniform_(layer.weight)
-            nn.init.zeros_(layer.bias)
+            if layer.bias is not None:
+                nn.init.zeros_(layer.bias)
         nn.init.xavier_uniform_(self.final_conv.weight)
-        nn.init.zeros_(self.final_conv.bias)
+        if self.final_conv.bias is not None:
+            nn.init.zeros_(self.final_conv.bias)
 
     def forward(self, embedding: HiddenEmbeddings) -> HiddenEmbeddings:
         """执行双路特征融合。"""
 
         hidden: Float[Tensor, "batch channel length"] = embedding.unsqueeze(-1)
         hidden = self.activation(self.initial_conv(hidden))
-        for layer in self.hidden_layers:
+        for hidden_layer in self.hidden_layers:
+            # 目的：在前向阶段保持卷积层的明确静态类型。
+            layer: nn.Conv1d = cast(nn.Conv1d, hidden_layer)
             hidden = self.activation(layer(hidden))
         hidden = self.final_conv(hidden)
         return self.pooling(hidden).squeeze(-1)

@@ -62,13 +62,15 @@ StartDR/
 职责：
 
 - 读取 TraceDR 风格候选集 `jsonl`
-- 导出 KGDNet 所需离线 `pkl`
+- 导出 KGDNet、4SDrug 所需离线 `pkl`
 - 训练当前精排模型
 
 主要入口：
 
 - `function-graph`
   读取单个 `.py` 文件时输出单文件函数图；读取目录时把目录内全部 `.py` 视为一个整体输出总函数图
+- `rerank-4sdrug-export`
+- `rerank-4sdrug-train`
 - `rerank-kgd-export`
 - `rerank-kgd-train`
 - `rerank-gat-train`
@@ -134,11 +136,20 @@ uv run retriever-eval --retriever dense --top-k 50 --output-name dense_test_k50
 
 精排侧：
 
+当前约定：
+
+- `KGD` 与 `4SDrug` 暂时不跑 `DDI` 相关实验
+- 原因是当前 `Neo4j` 中药品节点 `id` 与数据集内 `drugid` 尚未完全对齐，继续启用 `DDI` 会引入错误图边
+- 当前 `rerank-kgd-export`、`rerank-4sdrug-export` 会默认写出空的 `ddi_A_final.pkl`，不再依赖本地 Neo4j
+
 ```powershell
 uv run rerank-kgd-export --train-input resource/patient_candidate/tracedr_top50/train.jsonl --dev-input resource/patient_candidate/tracedr_top50/dev.jsonl --test-input resource/patient_candidate/tracedr_top50/test.jsonl --output-dir output/kgd/tracedr_top50
+uv run rerank-4sdrug-export --train-input resource/patient_candidate/tracedr_top50/train.jsonl --dev-input resource/patient_candidate/tracedr_top50/dev.jsonl --test-input resource/patient_candidate/tracedr_top50/test.jsonl --output-dir output/4sdrug/tracedr_top50 --batch-sizes 16
+uv run rerank-4sdrug-train --input-dir output/4sdrug/tracedr_top50 --output-name foursdrug_top50 --epochs 5 --batch-size 16
 uv run rerank-kgd-train --input-dir output/kgd/tracedr_top50 --output-name kgd_top50 --epochs 5
 uv run rerank-gat-train --train-input resource/patient_candidate/tracedr_top50/train.jsonl --dev-input resource/patient_candidate/tracedr_top50/dev.jsonl --output-name gat_top50 --epochs 5
 uv run rerank-tracedr-train --train-input resource/patient_candidate/tracedr_top50/train.jsonl --dev-input resource/patient_candidate/tracedr_top50/dev.jsonl --output-name tracedr_top50 --epochs 5
+uv run rerank-compare-train --models tracedr,gat,kgd,foursdrug --output-prefix tracedr_top50_compare --train-input resource/patient_candidate/tracedr_top50/train.jsonl --dev-input resource/patient_candidate/tracedr_top50/dev.jsonl --test-input resource/patient_candidate/tracedr_top50/test.jsonl --kgd-input-dir output/kgd/tracedr_top50 --foursdrug-input-dir output/4sdrug/tracedr_top50 --epochs 5 --selection-metric mrr --compare-metric mrr
 ```
 
 如需直接把 `TraceDR` 的 `pkl` 候选集规范化为同风格 `jsonl`，可执行：
@@ -152,12 +163,20 @@ uv run rerank-import-tracedr --split test
 说明：
 
 - `patient-candidates` 与 `rerank-import-tracedr` 最终都输出同一种 `{"people": ..., "top_k_drugs": ...}` `jsonl`
+- `rerank-4sdrug-export` 读取三份 TraceDR 风格候选集 `jsonl`，并写出 `4SDrug` 所需 `voc_final.pkl`、`data_{train,eval,test}.pkl`、`ddi_A_final.pkl`、`sym_train_<batch>.pkl`、`drug_train_<batch>.pkl`、`sym_sets.pkl`、`drug_multihots.pkl`
+- 当前实验约定中，`rerank-4sdrug-export` 会默认写出空的 `ddi_A_final.pkl`；原因是 `Neo4j` 药品节点 `id` 与数据集 `drugid` 尚未对齐
+- `rerank-4sdrug-train` 读取 `rerank-4sdrug-export` 生成的离线目录，训练 `4SDrug main1` 变体，并按 `--selection-metric` 保存最佳权重；默认仍使用 `JA`
 - `rerank-kgd-export` 读取三份 TraceDR 风格候选集 `jsonl`，并将 KGDNet 所需 `pkl` 写入 `--output-dir`
-- `rerank-kgd-train` 读取 `rerank-kgd-export` 生成的离线目录，并输出 KGDNet 训练权重与指标
-- `rerank-gat-train` 直接读取 TraceDR 风格候选集 `jsonl`，输出 GAT 训练权重与指标
+- 当前实验约定中，`rerank-kgd-export` 会默认写出空的 `ddi_A_final.pkl`；原因是 `Neo4j` 药品节点 `id` 与数据集 `drugid` 尚未对齐
+- `rerank-kgd-train` 读取 `rerank-kgd-export` 生成的离线目录，并按 `--selection-metric` 输出最佳权重与指标
+- `rerank-gat-train` 直接读取 TraceDR 风格候选集 `jsonl`，按 `--selection-metric` 输出最佳权重与指标；可额外传入 `--test-input`
+- `rerank-compare-train` 会复用统一训练 runner，顺序执行多个模型并在 `output/model/` 下生成汇总对比报告
 - 当前项目所有 Hugging Face `AutoModel.from_pretrained(...)` 均固定使用 `use_safetensors=False`，关闭 safetensors 自动转换探测
 - 若在 WSL 代理环境下使用 Hugging Face 下载模型，项目依赖已包含 `socksio`，执行 `uv sync` 后即可为 `httpx` 提供 SOCKS 代理支持
-- `rerank-tracedr-train` 默认读取 `resource/patient_candidate/tracedr_top50/train.jsonl`
+- `rerank-tracedr-train` 默认读取 `resource/patient_candidate/tracedr_top50/train.jsonl`，并可额外传入 `--test-input`
+- `rerank-4sdrug-export` 当前入口实现位于 `src/drrerank/core/model/foursdrug/export.py`
+- `rerank-4sdrug-train` 当前入口实现位于 `src/drrerank/core/model/foursdrug/train.py`
+- `rerank-compare-train` 当前入口实现位于 `src/drrerank/core/model/compare.py`
 - `rerank-tracedr-train` 当前入口实现位于 `src/drrerank/core/model/tracedr/train.py`
 - `rerank-kgd-export` 当前入口实现位于 `src/drrerank/core/model/kgd/export.py`
 - `rerank-kgd-train` 当前入口实现位于 `src/drrerank/core/model/kgd/train.py`
@@ -173,7 +192,7 @@ uv run rerank-import-tracedr --split test
 截至 `2026-04-04`，当前仓库边界如下：
 
 - 检索与检索后精排训练已经拆成两个子项目
-- 两边只通过 TraceDR 风格候选集 `jsonl` 交接，不再共享统一运行入口
+- 两边仍通过 TraceDR 风格候选集 `jsonl` 交接，但精排训练侧已经补上统一实验 runner 与对比入口
 - `drrerank` 不再包含 Neo4j 查询、检索器实现、检索评测逻辑
 - `ruff check` 与 `pyright` 分工明确，类型问题应以 `pyright` 为准
 - 文档、路径、脚本入口若后续再改，必须同步更新本文件

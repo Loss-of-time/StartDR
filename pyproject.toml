@@ -36,18 +36,17 @@ url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [project.scripts]
-function-graph = "function_graph.function_graph:main"
+function-graph = "function_graph.analysis_cli:main"
 patient-candidates = "drretrieval.patient_candidates:main"
 retriever-eval = "drretrieval.retriever_eval:main"
-rerank-4sdrug-export = "drrerank.core.model.foursdrug.export:main"
-rerank-4sdrug-train = "drrerank.core.model.foursdrug.train:main"
-rerank-compare-train = "drrerank.core.model.compare:main"
-rerank-gat-train = "drrerank.core.model.gat.train:main"
+rerank-4sdrug-export = "drrerank.foursdrug_export:main"
+rerank-4sdrug-train = "drrerank.foursdrug_train:main"
+rerank-gat-train = "drrerank.gat_train:main"
 rerank-import-tracedr = "drrerank.import_tracedr:main"
-rerank-kgd-export = "drrerank.core.model.kgd.export:main"
-rerank-kgd-train = "drrerank.core.model.kgd.train:main"
-rerank-tracedr-train = "drrerank.core.model.tracedr.train:main"
-treeify-function-graph = "function_graph.treeify_function_graph:main"
+rerank-kgd-export = "drrerank.kgd_export:main"
+rerank-kgd-train = "drrerank.kgd_train:main"
+rerank-tracedr-train = "drrerank.tracedr_train:main"
+treeify-function-graph = "function_graph.treeify_cli:main"
 
 [tool.ruff]
 line-length = 100

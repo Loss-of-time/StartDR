@@ -124,30 +124,3 @@ class TrainingRunResult:
 
     report: ExperimentReport
     artifacts: TrainingArtifacts
-
-
-@dataclass(slots=True)
-class CompareSummaryRow:
-    """单个模型在对比实验中的汇总行。"""
-
-    model_name: str
-    output_name: str
-    best_epoch: int
-    selection_metric: str
-    best_metric_value: float
-    compare_split: str
-    compare_metric: str
-    compare_metric_value: float
-    best_dev_metrics: ExperimentMetricMap
-    test_metrics: ExperimentMetricMap | None
-    report_path: str
-    checkpoint_path: str
-
-
-@dataclass(slots=True)
-class CompareReport:
-    """多模型对比实验汇总报告。"""
-
-    output_name: str
-    compare_metric: str
-    rows: list[CompareSummaryRow]

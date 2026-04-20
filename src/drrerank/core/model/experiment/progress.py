@@ -1,9 +1,8 @@
 """统一训练进度输出。"""
 
 import sys
-from collections.abc import Iterable, Iterator, Sized
-from dataclasses import dataclass, field
-from time import monotonic
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from typing import Protocol, cast
 
 from tqdm import tqdm
@@ -39,33 +38,17 @@ class ProgressHandle[ItemT](Protocol):
 
 
 @dataclass(slots=True)
-class PlainProgress[ItemT]:
-    """非 TTY 环境下的文本进度显示器。"""
+class SilentProgress[ItemT]:
+    """非 TTY 环境下的静默进度显示器。"""
 
     items: Iterable[ItemT]
     desc: str
     leave: bool = False
     total: int | None = None
-    min_interval_seconds: float = 1.0
-    current: int = 0
-    postfix: str = ""
-    _started: bool = field(default=False, init=False)
-    _closed: bool = field(default=False, init=False)
-    _last_render_at: float = field(default=0.0, init=False)
-    _last_message: str = field(default="", init=False)
+    _closed: bool = False
 
-    def __post_init__(self) -> None:
-        """补全缺失的总步数。"""
-
-        if self.total is not None:
-            return
-        if isinstance(self.items, Sized):
-            self.total = len(self.items)
-
-    def __enter__(self) -> "PlainProgress[ItemT]":
-        """进入上下文并输出初始状态。"""
-
-        self._ensure_started()
+    def __enter__(self) -> "SilentProgress[ItemT]":
+        """进入上下文并返回自身。"""
         return self
 
     def __exit__(
@@ -74,72 +57,24 @@ class PlainProgress[ItemT]:
         exc_value: BaseException | None,
         traceback: object | None,
     ) -> bool | None:
-        """退出上下文并关闭进度显示。"""
+        """退出上下文并关闭进度显示器。"""
 
         self.close()
         return None
 
     def __iter__(self) -> Iterator[ItemT]:
-        """迭代底层数据并按固定频率打印当前进度。"""
+        """迭代底层数据且不额外输出文本。"""
 
-        self._ensure_started()
-        item: ItemT
-        for item in self.items:
-            yield item
-            self.current += 1
-            self._maybe_render(force=self.total is not None and self.current >= self.total)
+        yield from self.items
         self.close()
 
     def set_postfix_str(self, s: str = "", refresh: bool = True) -> None:
-        """设置附加状态文本。"""
-
-        self.postfix = s
-        if refresh:
-            self._maybe_render(force=False)
+        """兼容 tqdm 接口但不输出附加状态。"""
 
     def close(self) -> None:
-        """关闭进度显示并输出最终状态。"""
+        """关闭进度显示器。"""
 
-        if self._closed:
-            return
-        self._maybe_render(force=True)
         self._closed = True
-
-    def _ensure_started(self) -> None:
-        """确保至少输出一次初始进度。"""
-
-        if self._started:
-            return
-        self._started = True
-        self._maybe_render(force=True)
-
-    def _maybe_render(self, force: bool) -> None:
-        """按频率限制输出文本进度。"""
-
-        if self._closed:
-            return
-        current_time: float = monotonic()
-        if not force and current_time - self._last_render_at < self.min_interval_seconds:
-            return
-        message: str = self._build_message()
-        if message == self._last_message:
-            return
-        print(message, file=sys.stdout, flush=True)
-        self._last_render_at = current_time
-        self._last_message = message
-
-    def _build_message(self) -> str:
-        """构造单行文本进度消息。"""
-
-        progress_text: str
-        if self.total is None:
-            progress_text = f"{self.current}"
-        else:
-            progress_text = f"{self.current}/{self.total}"
-        message: str = f"{self.desc}: {progress_text}"
-        if self.postfix != "":
-            message = f"{message} {self.postfix}"
-        return message
 
 
 def build_progress[ItemT](
@@ -173,8 +108,8 @@ def build_progress[ItemT](
                 dynamic_ncols=True,
             ),
         )
-    # 目的：在 uv、IDE 日志面板等非 TTY 环境下退化成稳定文本进度，避免训练过程完全无反馈。
-    return PlainProgress(
+    # 目的：在 uv、IDE 日志面板等非 TTY 环境下避免周期性刷屏，仅保留 epoch 摘要输出。
+    return SilentProgress(
         items=items,
         desc=desc,
         leave=leave,

@@ -1,9 +1,8 @@
-"""KGD 离线导出入口。"""
+"""KGD 离线导出流程。"""
 
-import argparse
 import json
 from collections.abc import Iterator
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
 from pickle import dump as pickle_dump
@@ -26,6 +25,16 @@ from .common import (
 # misc/KGDNet从patient_candidate生成数据文档.md
 # misc/KGDNet实现文档.md
 # misc/TraceDR-main/TraceDR-model/baseline/data_process/KGDNet_dataprocess.py
+
+
+@dataclass(slots=True)
+class KGDExportConfig:
+    """KGD 离线导出配置。"""
+
+    train_input: Path
+    dev_input: Path
+    test_input: Path
+    output_dir: Path
 
 
 def update_vocab(vocab: dict[str, int], row: list[str]) -> None:
@@ -391,27 +400,20 @@ def save_kgd_export_artifacts(
     return output_paths
 
 
-def main() -> None:
-    """离线导出命令行入口。"""
-
-    parser = argparse.ArgumentParser(description="从 TraceDR 风格 jsonl 导出 KGDNet 离线文件。")
-    parser.add_argument("--train-input", type=Path, required=True)
-    parser.add_argument("--dev-input", type=Path, required=True)
-    parser.add_argument("--test-input", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
-    args = parser.parse_args()
+def export_dataset(config: KGDExportConfig) -> KGDOutputPaths:
+    """执行 KGD 离线导出。"""
 
     print("开始流式构造 KGD 词表")
     voc_final, split_counts = build_vocabulary_from_inputs(
-        args.train_input,
-        args.dev_input,
-        args.test_input,
+        config.train_input,
+        config.dev_input,
+        config.test_input,
     )
     print(
         f"词表构造完成: train={split_counts[0]}, dev={split_counts[1]}, test={split_counts[2]}",
     )
 
-    output_paths: KGDOutputPaths = build_output_paths(args.output_dir)
+    output_paths: KGDOutputPaths = build_output_paths(config.output_dir)
     output_paths.output_dir.mkdir(parents=True, exist_ok=True)
 
     diag_upper_edges: set[tuple[int, int]] = set()
@@ -420,7 +422,7 @@ def main() -> None:
 
     print(f"开始写出 train 编码结果: {output_paths.data_train.resolve()}")
     write_split_rows_and_collect_edges(
-        args.train_input,
+        config.train_input,
         output_paths.data_train,
         voc_final,
         diag_upper_edges,
@@ -429,7 +431,7 @@ def main() -> None:
     )
     print(f"开始写出 dev 编码结果: {output_paths.data_eval.resolve()}")
     write_split_rows_and_collect_edges(
-        args.dev_input,
+        config.dev_input,
         output_paths.data_eval,
         voc_final,
         diag_upper_edges,
@@ -438,7 +440,7 @@ def main() -> None:
     )
     print(f"开始写出 test 编码结果: {output_paths.data_test.resolve()}")
     write_split_rows_and_collect_edges(
-        args.test_input,
+        config.test_input,
         output_paths.data_test,
         voc_final,
         diag_upper_edges,
@@ -458,7 +460,7 @@ def main() -> None:
     print("开始构造空 DDI 矩阵")
     ddi_adj: csr_matrix = build_ddi_adj(voc_final.med_voc.word2idx)
     output_paths = save_kgd_export_artifacts(
-        args.output_dir,
+        config.output_dir,
         voc_final,
         diag_adj,
         proc_adj,
@@ -468,10 +470,7 @@ def main() -> None:
         ddi_adj,
     )
     print(f"写出完成: {output_paths.output_dir.resolve()}")
-
-
-if __name__ == "__main__":
-    main()
+    return output_paths
 
 
 # 别删：少女祈祷中...☯️

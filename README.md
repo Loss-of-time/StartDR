@@ -24,7 +24,13 @@ StartDR/
 │  │  ├─ retriever_eval.py
 │  │  └─ core/
 │  └─ drrerank/
+│     ├─ foursdrug_export.py
+│     ├─ foursdrug_train.py
+│     ├─ gat_train.py
 │     ├─ import_tracedr.py
+│     ├─ kgd_export.py
+│     ├─ kgd_train.py
+│     ├─ tracedr_train.py
 │     └─ core/
 ├─ pyproject.toml
 └─ README.md
@@ -33,7 +39,7 @@ StartDR/
 约定：
 
 - `src/drretrieval/` 根目录只保留可运行入口
-- `src/drrerank/` 根目录只保留跨模型公共入口
+- `src/drrerank/` 根目录只保留 CLI 入口
 - 非可运行文件统一下沉到各自的 `core/`
 - 不再保留统一日志模块，运行信息统一使用 `print` 和 `tqdm`
 
@@ -149,7 +155,6 @@ uv run rerank-4sdrug-train --input-dir output/4sdrug/tracedr_top50 --output-name
 uv run rerank-kgd-train --input-dir output/kgd/tracedr_top50 --output-name kgd_top50 --epochs 5
 uv run rerank-gat-train --train-input resource/patient_candidate/tracedr_top50/train.jsonl --dev-input resource/patient_candidate/tracedr_top50/dev.jsonl --output-name gat_top50 --epochs 5
 uv run rerank-tracedr-train --train-input resource/patient_candidate/tracedr_top50/train.jsonl --dev-input resource/patient_candidate/tracedr_top50/dev.jsonl --output-name tracedr_top50 --epochs 5
-uv run rerank-compare-train --models tracedr,gat,kgd,foursdrug --output-prefix tracedr_top50_compare --train-input resource/patient_candidate/tracedr_top50/train.jsonl --dev-input resource/patient_candidate/tracedr_top50/dev.jsonl --test-input resource/patient_candidate/tracedr_top50/test.jsonl --kgd-input-dir output/kgd/tracedr_top50 --foursdrug-input-dir output/4sdrug/tracedr_top50 --epochs 5 --selection-metric mrr --compare-metric mrr
 ```
 
 如需直接把 `TraceDR` 的 `pkl` 候选集规范化为同风格 `jsonl`，可执行：
@@ -170,20 +175,20 @@ uv run rerank-import-tracedr --split test
 - 当前实验约定中，`rerank-kgd-export` 会默认写出空的 `ddi_A_final.pkl`；原因是 `Neo4j` 药品节点 `id` 与数据集 `drugid` 尚未对齐
 - `rerank-kgd-train` 读取 `rerank-kgd-export` 生成的离线目录，并按 `--selection-metric` 输出最佳权重与指标
 - `rerank-gat-train` 直接读取 TraceDR 风格候选集 `jsonl`，按 `--selection-metric` 输出最佳权重与指标；可额外传入 `--test-input`
-- `rerank-compare-train` 会复用统一训练 runner，顺序执行多个模型并在 `output/model/` 下生成汇总对比报告
-- 当前 `drrerank` 训练入口在交互式终端下显示 `tqdm` 进度条；若运行环境不是 TTY（例如 `uv` 子进程日志面板、部分 IDE 终端采集面板），会自动退化为周期性 `print` 进度，避免训练过程没有可见反馈
+- 当前 `drrerank` 训练入口在交互式终端下显示 `tqdm` 进度条；若运行环境不是 TTY（例如 `uv` 子进程日志面板、部分 IDE 终端采集面板），则不再周期性输出进度文本，仅保留每个 epoch 的摘要日志，避免训练输出过于臃肿
 - 当前项目所有 Hugging Face `AutoModel.from_pretrained(...)` 均固定使用 `use_safetensors=False`，关闭 safetensors 自动转换探测
 - 若在 WSL 代理环境下使用 Hugging Face 下载模型，项目依赖已包含 `socksio`，执行 `uv sync` 后即可为 `httpx` 提供 SOCKS 代理支持
 - `rerank-tracedr-train` 默认读取 `resource/patient_candidate/tracedr_top50/train.jsonl`，并可额外传入 `--test-input`
-- `rerank-4sdrug-export` 当前入口实现位于 `src/drrerank/core/model/foursdrug/export.py`
-- `rerank-4sdrug-train` 当前入口实现位于 `src/drrerank/core/model/foursdrug/train.py`
-- `rerank-compare-train` 当前入口实现位于 `src/drrerank/core/model/compare.py`
-- `rerank-tracedr-train` 当前入口实现位于 `src/drrerank/core/model/tracedr/train.py`
-- `rerank-kgd-export` 当前入口实现位于 `src/drrerank/core/model/kgd/export.py`
-- `rerank-kgd-train` 当前入口实现位于 `src/drrerank/core/model/kgd/train.py`
-- `rerank-gat-train` 当前入口实现位于 `src/drrerank/core/model/gat/train.py`
+- `rerank-4sdrug-export` 当前 CLI 入口位于 `src/drrerank/foursdrug_export.py`
+- `rerank-4sdrug-train` 当前 CLI 入口位于 `src/drrerank/foursdrug_train.py`
+- `rerank-tracedr-train` 当前 CLI 入口位于 `src/drrerank/tracedr_train.py`
+- `rerank-kgd-export` 当前 CLI 入口位于 `src/drrerank/kgd_export.py`
+- `rerank-kgd-train` 当前 CLI 入口位于 `src/drrerank/kgd_train.py`
+- `rerank-gat-train` 当前 CLI 入口位于 `src/drrerank/gat_train.py`
 - KGD 运行时构图入口位于 `src/drrerank/core/model/kgd/runtime.py`
 - 函数图分析独立项目位于 `src/function_graph/`
+- `function-graph` 当前 CLI 入口位于 `src/function_graph/analysis_cli.py`
+- `treeify-function-graph` 当前 CLI 入口位于 `src/function_graph/treeify_cli.py`
 - `function-graph` 现在会在 `json` 与 `md` 产物中附带函数级重构建议，并区分读边界、写边界、状态变异三类 effect
 - `function-graph --source <目录>` 会把目录内全部 `.py` 模块视为一个整体分析，并尝试解析目录内模块之间的 `import` / `from ... import ...` 调用关系
 - `function-graph` 与 `treeify-function-graph` 默认会在 `output/function_graph/<时间戳>/` 下写入 `json`、`md`、`dot`、`svg` 产物，避免多次运行结果堆在同一层目录
@@ -193,7 +198,7 @@ uv run rerank-import-tracedr --split test
 截至 `2026-04-04`，当前仓库边界如下：
 
 - 检索与检索后精排训练已经拆成两个子项目
-- 两边仍通过 TraceDR 风格候选集 `jsonl` 交接，但精排训练侧已经补上统一实验 runner 与对比入口
+- 两边仍通过 TraceDR 风格候选集 `jsonl` 交接，精排训练侧保留各模型独立训练入口
 - `drrerank` 不再包含 Neo4j 查询、检索器实现、检索评测逻辑
 - `ruff check` 与 `pyright` 分工明确，类型问题应以 `pyright` 为准
 - 文档、路径、脚本入口若后续再改，必须同步更新本文件

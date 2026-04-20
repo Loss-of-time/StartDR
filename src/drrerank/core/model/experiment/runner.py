@@ -38,6 +38,7 @@ class ExperimentAdapter[ConfigT: ExperimentConfigLike, StateT, SnapshotT](Protoc
         Returns:
             后续训练与评测复用的状态对象。
         """
+        ...
 
     def train_epoch(self, state: StateT, epoch: int, total_epochs: int) -> float:
         """执行单轮训练。
@@ -50,6 +51,7 @@ class ExperimentAdapter[ConfigT: ExperimentConfigLike, StateT, SnapshotT](Protoc
         Returns:
             当前轮训练损失均值。
         """
+        ...
 
     def evaluate(self, state: StateT, split: ExperimentSplit) -> ExperimentEvalResult:
         """执行指定切分的评测。
@@ -61,6 +63,7 @@ class ExperimentAdapter[ConfigT: ExperimentConfigLike, StateT, SnapshotT](Protoc
         Returns:
             统一评测结果。
         """
+        ...
 
     def has_split(self, state: StateT, split: ExperimentSplit) -> bool:
         """判断是否存在指定切分。
@@ -72,6 +75,7 @@ class ExperimentAdapter[ConfigT: ExperimentConfigLike, StateT, SnapshotT](Protoc
         Returns:
             若存在可评测数据则返回真。
         """
+        ...
 
     def capture_snapshot(self, state: StateT) -> SnapshotT:
         """捕获最佳权重快照。
@@ -82,6 +86,7 @@ class ExperimentAdapter[ConfigT: ExperimentConfigLike, StateT, SnapshotT](Protoc
         Returns:
             可恢复的权重快照。
         """
+        ...
 
     def restore_snapshot(self, state: StateT, snapshot: SnapshotT) -> None:
         """恢复最佳权重快照。
@@ -90,6 +95,7 @@ class ExperimentAdapter[ConfigT: ExperimentConfigLike, StateT, SnapshotT](Protoc
             state: 当前实验状态。
             snapshot: 待恢复的权重快照。
         """
+        ...
 
     def export_checkpoint(self, state: StateT, output_path: Path) -> None:
         """导出最终 checkpoint。
@@ -98,6 +104,7 @@ class ExperimentAdapter[ConfigT: ExperimentConfigLike, StateT, SnapshotT](Protoc
             state: 当前实验状态。
             output_path: checkpoint 输出路径。
         """
+        ...
 
 
 def _format_eval_summary(

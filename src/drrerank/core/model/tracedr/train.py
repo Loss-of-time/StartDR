@@ -1,6 +1,5 @@
-"""TraceDR 精排模型训练入口。"""
+"""TraceDR 精排模型训练流程。"""
 
-import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -8,17 +7,27 @@ import torch
 from torch import Tensor
 
 from ...schema import DrugRecMedicine
-from ...setting import DEFAULT_TRACEDR_DEV_INPUT_PATH, DEFAULT_TRACEDR_TRAIN_INPUT_PATH
 from ...tracedr import load_tracedr_samples
-from ..experiment.progress import build_progress
 from ..experiment.runner import ExperimentAdapter, run_training_experiment
 from ..experiment.schema import ComparableMetrics, ExperimentEvalResult
+from ..pointwise_training import (
+    PointwiseSnapshot,
+    PointwiseTrainState,
+    capture_state_dict_snapshot,
+    evaluate_pointwise_model,
+    export_state_dict_checkpoint,
+    load_pointwise_splits,
+    restore_state_dict_snapshot,
+    select_split_samples,
+    train_pointwise_epoch,
+)
 from .data import build_model_sample
 from .metrics import TraceDRMetrics, aggregate_metrics, calculate_metrics
 from .model import HeterogeneousGNN, TraceDRForwardResult
 from .schema import TraceDREntity, TraceDRModelSample
 
-type TraceDRSnapshot = dict[str, Tensor]
+type TraceDRSnapshot = PointwiseSnapshot
+type TraceDRTrainState = PointwiseTrainState[HeterogeneousGNN, TraceDRModelSample]
 
 
 @dataclass(slots=True)
@@ -44,17 +53,6 @@ class RankedAnswer:
     label: str
     score: float
     rank: int
-
-
-@dataclass(slots=True)
-class TraceDRTrainState:
-    """TraceDR 统一 runner 需要的状态。"""
-
-    model: HeterogeneousGNN
-    optimizer: torch.optim.Optimizer
-    train_samples: list[TraceDRModelSample]
-    dev_samples: list[TraceDRModelSample]
-    test_samples: list[TraceDRModelSample]
 
 
 def _build_candidate_drug_map(
@@ -92,26 +90,6 @@ def load_samples(
         for sample in raw_samples
         if (model_sample := build_model_sample(sample, train=train)) is not None
     ]
-
-
-def parse_args() -> argparse.Namespace:
-    """解析命令行参数。
-
-    Returns:
-        解析后的参数对象。
-    """
-
-    parser = argparse.ArgumentParser(description="训练 TraceDR rerank 模型。")
-    parser.add_argument("--train-input", type=Path, default=DEFAULT_TRACEDR_TRAIN_INPUT_PATH)
-    parser.add_argument("--dev-input", type=Path, default=DEFAULT_TRACEDR_DEV_INPUT_PATH)
-    parser.add_argument("--test-input", type=Path, default=None)
-    parser.add_argument("--output-name", type=str, required=True)
-    parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--train-limit", type=int, default=None)
-    parser.add_argument("--dev-limit", type=int, default=None)
-    parser.add_argument("--test-limit", type=int, default=None)
-    parser.add_argument("--selection-metric", type=str, default="mrr")
-    return parser.parse_args()
 
 
 def build_ranked_answers(
@@ -170,34 +148,39 @@ def evaluate_model(
         聚合后的 TraceDR 指标。
     """
 
-    model.eval()
-    losses: list[float] = []
-    metrics_list: list[TraceDRMetrics] = []
+    return evaluate_pointwise_model(
+        model=model,
+        samples=samples,
+        to_cuda=lambda sample: sample.to_cuda(),
+        run_forward=lambda current_model, cuda_sample: current_model(cuda_sample),
+        build_metrics=_build_sample_metrics,
+        merge_metrics=_merge_eval_metrics,
+        empty_error_message="验证阶段未产生任何指标，请检查 samples 或评估流程。",
+    )
 
-    with torch.no_grad():
-        # 目的：统一复用可自适应的进度输出，保证非 TTY 环境下验证阶段也有可见反馈。
-        with build_progress(samples, desc="验证", leave=False) as progress:
-            for sample in progress:
-                cuda_sample: TraceDRModelSample = sample.to_cuda()
-                result: TraceDRForwardResult = model(cuda_sample)
 
-                losses.append(float(result.loss.item()))
+def _build_sample_metrics(
+    sample: TraceDRModelSample,
+    result: TraceDRForwardResult,
+) -> TraceDRMetrics:
+    """构造单个 TraceDR 样本的评测指标。"""
 
-                ranked_answers: list[RankedAnswer] = build_ranked_answers(sample, result)
-                metrics: TraceDRMetrics = calculate_metrics(
-                    question_id=str(sample.question_id),
-                    answers=ranked_answers,
-                    gold_answers=sample.gold_answers,
-                    k=5,
-                    candidate_drug_map=_build_candidate_drug_map(sample),
-                    on_medicines=sample.on_medicine,
-                )
-                metrics_list.append(metrics)
+    ranked_answers: list[RankedAnswer] = build_ranked_answers(sample, result)
+    return calculate_metrics(
+        question_id=str(sample.question_id),
+        answers=ranked_answers,
+        gold_answers=sample.gold_answers,
+        k=5,
+        candidate_drug_map=_build_candidate_drug_map(sample),
+        on_medicines=sample.on_medicine,
+    )
 
-    model.train()
 
-    if not metrics_list:
-        raise ValueError("验证阶段未产生任何指标，请检查 samples 或评估流程。")
+def _merge_eval_metrics(
+    losses: list[float],
+    metrics_list: list[TraceDRMetrics],
+) -> TraceDRMetrics:
+    """聚合 TraceDR 验证阶段的损失与排序指标。"""
 
     aggregated_metrics: TraceDRMetrics = aggregate_metrics(metrics_list)
     return TraceDRMetrics(
@@ -250,27 +233,19 @@ class TraceDRTrainAdapter(ExperimentAdapter[TrainConfig, TraceDRTrainState, Trac
     def setup(self, config: TrainConfig) -> TraceDRTrainState:
         """构造 TraceDR 训练状态。"""
 
-        train_samples: list[TraceDRModelSample] = load_samples(
-            config.train_input,
-            config.train_limit,
-            train=True,
+        train_samples: list[TraceDRModelSample]
+        dev_samples: list[TraceDRModelSample]
+        test_samples: list[TraceDRModelSample]
+        train_samples, dev_samples, test_samples = load_pointwise_splits(
+            train_input=config.train_input,
+            dev_input=config.dev_input,
+            test_input=config.test_input,
+            train_limit=config.train_limit,
+            dev_limit=config.dev_limit,
+            test_limit=config.test_limit,
+            load_samples=load_samples,
+            experiment_name="TraceDR",
         )
-        dev_samples: list[TraceDRModelSample] = load_samples(
-            config.dev_input,
-            config.dev_limit,
-            train=False,
-        )
-        test_samples: list[TraceDRModelSample] = []
-        if config.test_input is not None:
-            test_samples = load_samples(
-                config.test_input,
-                config.test_limit,
-                train=False,
-            )
-        if not train_samples:
-            raise ValueError("训练集为空，无法执行 TraceDR 训练。")
-        if not dev_samples:
-            raise ValueError("验证集为空，无法执行 TraceDR 评估。")
 
         model: HeterogeneousGNN = HeterogeneousGNN()
         model.train()
@@ -279,7 +254,7 @@ class TraceDRTrainAdapter(ExperimentAdapter[TrainConfig, TraceDRTrainState, Trac
             lr=1e-5,
             weight_decay=0.01,
         )
-        return TraceDRTrainState(
+        return PointwiseTrainState(
             model=model,
             optimizer=optimizer,
             train_samples=train_samples,
@@ -295,26 +270,13 @@ class TraceDRTrainAdapter(ExperimentAdapter[TrainConfig, TraceDRTrainState, Trac
     ) -> float:
         """执行单轮 TraceDR 训练。"""
 
-        losses: list[float] = []
-        total_steps: int = total_epochs * len(state.train_samples)
-        with build_progress(
-            state.train_samples,
-            desc=f"训练 epoch {epoch}/{total_epochs}",
-            leave=False,
-        ) as progress:
-            sample_idx: int
-            sample: TraceDRModelSample
-            for sample_idx, sample in enumerate(progress, start=1):
-                cuda_sample: TraceDRModelSample = sample.to_cuda()
-                state.optimizer.zero_grad(set_to_none=True)
-                result: TraceDRForwardResult = state.model(cuda_sample)
-                result.loss.backward()
-                state.optimizer.step()
-                loss: float = float(result.loss.item())
-                losses.append(loss)
-                global_step: int = (epoch - 1) * len(state.train_samples) + sample_idx
-                progress.set_postfix_str(f"step={global_step}/{total_steps} loss={loss:.6f}")
-        return sum(losses) / len(losses)
+        return train_pointwise_epoch(
+            state=state,
+            epoch=epoch,
+            total_epochs=total_epochs,
+            to_cuda=lambda sample: sample.to_cuda(),
+            run_forward=lambda current_model, cuda_sample: current_model(cuda_sample),
+        )
 
     def evaluate(
         self,
@@ -323,11 +285,11 @@ class TraceDRTrainAdapter(ExperimentAdapter[TrainConfig, TraceDRTrainState, Trac
     ) -> ExperimentEvalResult:
         """执行指定切分的 TraceDR 评测。"""
 
-        samples: list[TraceDRModelSample]
-        if split == "dev":
-            samples = state.dev_samples
-        else:
-            samples = state.test_samples
+        samples: list[TraceDRModelSample] = select_split_samples(
+            state.dev_samples,
+            state.test_samples,
+            split,
+        )
         return build_eval_result(evaluate_model(state.model, samples))
 
     def has_split(
@@ -344,9 +306,7 @@ class TraceDRTrainAdapter(ExperimentAdapter[TrainConfig, TraceDRTrainState, Trac
     def capture_snapshot(self, state: TraceDRTrainState) -> TraceDRSnapshot:
         """捕获当前最佳权重。"""
 
-        return {
-            key: value.detach().cpu().clone() for key, value in state.model.state_dict().items()
-        }
+        return capture_state_dict_snapshot(state.model)
 
     def restore_snapshot(
         self,
@@ -355,39 +315,16 @@ class TraceDRTrainAdapter(ExperimentAdapter[TrainConfig, TraceDRTrainState, Trac
     ) -> None:
         """恢复最佳权重。"""
 
-        state.model.load_state_dict(snapshot)
+        restore_state_dict_snapshot(state.model, snapshot)
 
     def export_checkpoint(self, state: TraceDRTrainState, output_path: Path) -> None:
         """导出 TraceDR checkpoint。"""
 
         # 目的：统一把最佳轮次权重落盘，便于不同模型按同一方式复现实验。
-        torch.save(state.model.state_dict(), output_path)
+        export_state_dict_checkpoint(state.model, output_path)
 
 
 def train(config: TrainConfig) -> None:
     """执行 TraceDR 训练。"""
 
     run_training_experiment(config, TraceDRTrainAdapter())
-
-
-def main() -> None:
-    """命令行入口。"""
-
-    args: argparse.Namespace = parse_args()
-    train(
-        TrainConfig(
-            train_input=args.train_input,
-            dev_input=args.dev_input,
-            test_input=args.test_input,
-            output_name=args.output_name,
-            epochs=args.epochs,
-            train_limit=args.train_limit,
-            dev_limit=args.dev_limit,
-            test_limit=args.test_limit,
-            selection_metric=args.selection_metric,
-        )
-    )
-
-
-if __name__ == "__main__":
-    main()

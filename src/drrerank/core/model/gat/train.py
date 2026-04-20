@@ -1,23 +1,32 @@
-"""GAT 精排模型训练入口。"""
+"""GAT 精排模型训练流程。"""
 
-import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
 import torch
 from torch import Tensor
 
-from ...setting import DEFAULT_GNN_DEV_INPUT_PATH, DEFAULT_GNN_TRAIN_INPUT_PATH
 from ...tracedr import load_tracedr_samples
-from ..experiment.progress import build_progress
 from ..experiment.runner import ExperimentAdapter, run_training_experiment
 from ..experiment.schema import ComparableMetrics, ExperimentEvalResult
+from ..pointwise_training import (
+    PointwiseSnapshot,
+    PointwiseTrainState,
+    capture_state_dict_snapshot,
+    evaluate_pointwise_model,
+    export_state_dict_checkpoint,
+    load_pointwise_splits,
+    restore_state_dict_snapshot,
+    select_split_samples,
+    train_pointwise_epoch,
+)
 from ..tracedr.metrics import TraceDRMetrics, aggregate_metrics, calculate_metrics
 from .data import build_gat_model_sample
 from .model import GAT, GATForwardResult
 from .schema import GATEntity, GATModelSample
 
-type GATSnapshot = dict[str, Tensor]
+type GATSnapshot = PointwiseSnapshot
+type GATTrainState = PointwiseTrainState[GAT, GATModelSample]
 
 
 @dataclass(slots=True)
@@ -44,17 +53,6 @@ class RankedAnswer:
     label: str
     score: float
     rank: int
-
-
-@dataclass(slots=True)
-class GATTrainState:
-    """GAT 统一 runner 需要的状态。"""
-
-    model: GAT
-    optimizer: torch.optim.Optimizer
-    train_samples: list[GATModelSample]
-    dev_samples: list[GATModelSample]
-    test_samples: list[GATModelSample]
 
 
 def load_samples(
@@ -86,27 +84,6 @@ def load_samples(
             continue
         model_samples.append(model_sample)
     return model_samples
-
-
-def parse_args() -> argparse.Namespace:
-    """解析命令行参数。
-
-    Returns:
-        解析后的参数对象。
-    """
-
-    parser = argparse.ArgumentParser(description="训练 GAT rerank 模型。")
-    parser.add_argument("--train-input", type=Path, default=DEFAULT_GNN_TRAIN_INPUT_PATH)
-    parser.add_argument("--dev-input", type=Path, default=DEFAULT_GNN_DEV_INPUT_PATH)
-    parser.add_argument("--test-input", type=Path, default=None)
-    parser.add_argument("--output-name", type=str, required=True)
-    parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--encoder-model-name", type=str, default="hfl/chinese-roberta-wwm-ext")
-    parser.add_argument("--train-limit", type=int, default=None)
-    parser.add_argument("--dev-limit", type=int, default=None)
-    parser.add_argument("--test-limit", type=int, default=None)
-    parser.add_argument("--selection-metric", type=str, default="mrr")
-    return parser.parse_args()
 
 
 def build_ranked_answers(
@@ -164,34 +141,40 @@ def evaluate_model(
         聚合后的验证指标。
     """
 
-    model.eval()
-    losses: list[float] = []
-    metrics_list: list[TraceDRMetrics] = []
+    return evaluate_pointwise_model(
+        model=model,
+        samples=samples,
+        to_cuda=lambda sample: sample.to_cuda(),
+        run_forward=lambda current_model, cuda_sample: current_model(cuda_sample),
+        build_metrics=_build_sample_metrics,
+        merge_metrics=_merge_eval_metrics,
+        empty_error_message="验证阶段未产生任何指标，请检查 GAT 样本构造流程。",
+    )
 
-    with torch.no_grad():
-        # 目的：统一复用可自适应的进度输出，保证非 TTY 环境下验证阶段也有可见反馈。
-        with build_progress(samples, desc="验证", leave=False) as progress:
-            for sample in progress:
-                cuda_sample: GATModelSample = sample.to_cuda()
-                result: GATForwardResult = model(cuda_sample)
-                loss: float = float(result.loss.item())
-                ranked_answers: list[RankedAnswer] = build_ranked_answers(sample, result)
-                metrics: TraceDRMetrics = calculate_metrics(
-                    question_id=str(sample.question_id),
-                    answers=ranked_answers,
-                    gold_answers=sample.gold_answers,
-                    k=5,
-                    # 目的：GAT 的 DDI 口径对齐参考实现，只统计候选药物与当前在用药的相互作用风险。
-                    candidate_drug_map=sample.source_sample.top_k_drugs,
-                    on_medicines=sample.source_sample.people.on_medicine,
-                )
-                losses.append(loss)
-                metrics_list.append(metrics)
 
-    model.train()
+def _build_sample_metrics(
+    sample: GATModelSample,
+    result: GATForwardResult,
+) -> TraceDRMetrics:
+    """构造单个 GAT 样本的评测指标。"""
 
-    if not metrics_list:
-        raise ValueError("验证阶段未产生任何指标，请检查 GAT 样本构造流程。")
+    ranked_answers: list[RankedAnswer] = build_ranked_answers(sample, result)
+    return calculate_metrics(
+        question_id=str(sample.question_id),
+        answers=ranked_answers,
+        gold_answers=sample.gold_answers,
+        k=5,
+        # 目的：GAT 的 DDI 口径对齐参考实现，只统计候选药物与当前在用药的相互作用风险。
+        candidate_drug_map=sample.source_sample.top_k_drugs,
+        on_medicines=sample.source_sample.people.on_medicine,
+    )
+
+
+def _merge_eval_metrics(
+    losses: list[float],
+    metrics_list: list[TraceDRMetrics],
+) -> TraceDRMetrics:
+    """聚合 GAT 验证阶段的损失与排序指标。"""
 
     aggregated_metrics: TraceDRMetrics = aggregate_metrics(metrics_list)
     return TraceDRMetrics(
@@ -261,27 +244,19 @@ class GATTrainAdapter(ExperimentAdapter[TrainConfig, GATTrainState, GATSnapshot]
     def setup(self, config: TrainConfig) -> GATTrainState:
         """构造 GAT 训练状态。"""
 
-        train_samples: list[GATModelSample] = load_samples(
-            config.train_input,
-            config.train_limit,
-            train=True,
+        train_samples: list[GATModelSample]
+        dev_samples: list[GATModelSample]
+        test_samples: list[GATModelSample]
+        train_samples, dev_samples, test_samples = load_pointwise_splits(
+            train_input=config.train_input,
+            dev_input=config.dev_input,
+            test_input=config.test_input,
+            train_limit=config.train_limit,
+            dev_limit=config.dev_limit,
+            test_limit=config.test_limit,
+            load_samples=load_samples,
+            experiment_name="GAT",
         )
-        dev_samples: list[GATModelSample] = load_samples(
-            config.dev_input,
-            config.dev_limit,
-            train=False,
-        )
-        test_samples: list[GATModelSample] = []
-        if config.test_input is not None:
-            test_samples = load_samples(
-                config.test_input,
-                config.test_limit,
-                train=False,
-            )
-        if not train_samples:
-            raise ValueError("训练集为空，无法执行 GAT 训练。")
-        if not dev_samples:
-            raise ValueError("验证集为空，无法执行 GAT 评估。")
 
         model: GAT = GAT(encoder_model_name=config.encoder_model_name)
         model.train()
@@ -290,7 +265,7 @@ class GATTrainAdapter(ExperimentAdapter[TrainConfig, GATTrainState, GATSnapshot]
             lr=1e-5,
             weight_decay=0.01,
         )
-        return GATTrainState(
+        return PointwiseTrainState(
             model=model,
             optimizer=optimizer,
             train_samples=train_samples,
@@ -301,37 +276,23 @@ class GATTrainAdapter(ExperimentAdapter[TrainConfig, GATTrainState, GATSnapshot]
     def train_epoch(self, state: GATTrainState, epoch: int, total_epochs: int) -> float:
         """执行单轮 GAT 训练。"""
 
-        losses: list[float] = []
-        total_steps: int = total_epochs * len(state.train_samples)
-        with build_progress(
-            state.train_samples,
-            desc=f"训练 epoch {epoch}/{total_epochs}",
-            leave=False,
-        ) as progress:
-            sample_idx: int
-            sample: GATModelSample
-            for sample_idx, sample in enumerate(progress, start=1):
-                cuda_sample: GATModelSample = sample.to_cuda()
-                state.optimizer.zero_grad(set_to_none=True)
-                result: GATForwardResult = state.model(cuda_sample)
-                result.loss.backward()
-                sanitize_gradients(state.model)
-                state.optimizer.step()
-
-                loss: float = float(result.loss.item())
-                global_step: int = (epoch - 1) * len(state.train_samples) + sample_idx
-                losses.append(loss)
-                progress.set_postfix_str(f"step={global_step}/{total_steps} loss={loss:.6f}")
-        return sum(losses) / len(losses)
+        return train_pointwise_epoch(
+            state=state,
+            epoch=epoch,
+            total_epochs=total_epochs,
+            to_cuda=lambda sample: sample.to_cuda(),
+            run_forward=lambda current_model, cuda_sample: current_model(cuda_sample),
+            after_backward=sanitize_gradients,
+        )
 
     def evaluate(self, state: GATTrainState, split: str) -> ExperimentEvalResult:
         """执行指定切分的 GAT 评测。"""
 
-        samples: list[GATModelSample]
-        if split == "dev":
-            samples = state.dev_samples
-        else:
-            samples = state.test_samples
+        samples: list[GATModelSample] = select_split_samples(
+            state.dev_samples,
+            state.test_samples,
+            split,
+        )
         return build_eval_result(evaluate_model(state.model, samples))
 
     def has_split(self, state: GATTrainState, split: str) -> bool:
@@ -344,47 +305,21 @@ class GATTrainAdapter(ExperimentAdapter[TrainConfig, GATTrainState, GATSnapshot]
     def capture_snapshot(self, state: GATTrainState) -> GATSnapshot:
         """捕获当前最佳权重。"""
 
-        return {
-            key: value.detach().cpu().clone() for key, value in state.model.state_dict().items()
-        }
+        return capture_state_dict_snapshot(state.model)
 
     def restore_snapshot(self, state: GATTrainState, snapshot: GATSnapshot) -> None:
         """恢复最佳权重。"""
 
-        state.model.load_state_dict(snapshot)
+        restore_state_dict_snapshot(state.model, snapshot)
 
     def export_checkpoint(self, state: GATTrainState, output_path: Path) -> None:
         """导出 GAT checkpoint。"""
 
         # 目的：统一导出最佳轮次权重，保证后续对比实验按同一准则复现。
-        torch.save(state.model.state_dict(), output_path)
+        export_state_dict_checkpoint(state.model, output_path)
 
 
 def train(config: TrainConfig) -> None:
     """执行 GAT 训练。"""
 
     run_training_experiment(config, GATTrainAdapter())
-
-
-def main() -> None:
-    """命令行入口。"""
-
-    args: argparse.Namespace = parse_args()
-    train(
-        TrainConfig(
-            train_input=args.train_input,
-            dev_input=args.dev_input,
-            test_input=args.test_input,
-            output_name=args.output_name,
-            epochs=args.epochs,
-            encoder_model_name=args.encoder_model_name,
-            train_limit=args.train_limit,
-            dev_limit=args.dev_limit,
-            test_limit=args.test_limit,
-            selection_metric=args.selection_metric,
-        )
-    )
-
-
-if __name__ == "__main__":
-    main()

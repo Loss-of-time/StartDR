@@ -3,13 +3,19 @@
 import ast
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from .ast_visitors import FunctionDefinitionCollector
     from .refactor_advice import RefactorSuggestion
 
 type ScopeName = str
 type NodeName = str
+type SimilarityKind = Literal[
+    "exact_duplicate_function",
+    "near_duplicate_function",
+    "similar_dataclass",
+]
 
 
 @dataclass(slots=True)
@@ -66,6 +72,9 @@ class FunctionGraphArtifacts:
         edges: 函数边列表。
         report: 图统计摘要。
         suggestions: 基于当前函数图生成的重构建议。
+        dataclass_nodes: 识别出的 dataclass 类型节点列表。
+        similarity_edges: 重复函数与相似 dataclass 的结构边列表。
+        pattern_clusters: 基于结构边聚合出的模式簇。
     """
 
     source_path: str
@@ -73,6 +82,9 @@ class FunctionGraphArtifacts:
     edges: list[FunctionEdge]
     report: FunctionGraphReport
     suggestions: list["RefactorSuggestion"] = field(default_factory=list)
+    dataclass_nodes: list["DataclassNode"] = field(default_factory=list)
+    similarity_edges: list["SimilarityEdge"] = field(default_factory=list)
+    pattern_clusters: list["PatternCluster"] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -85,6 +97,62 @@ class RawFunction:
     lexical_parent: str | None
     class_owner: str | None
     node: ast.FunctionDef | ast.AsyncFunctionDef
+
+
+@dataclass(slots=True)
+class RawClass:
+    """AST 阶段采集到的类定义。"""
+
+    qualname: str
+    simple_name: str
+    owner: str | None
+    lexical_parent: str | None
+    node: ast.ClassDef
+
+
+@dataclass(slots=True)
+class DataclassField:
+    """单个 dataclass 字段摘要。"""
+
+    name: str
+    annotation: str | None
+    has_default: bool
+    default_kind: str | None
+
+
+@dataclass(slots=True)
+class DataclassNode:
+    """dataclass 类型节点信息。"""
+
+    qualname: str
+    simple_name: str
+    owner: str | None
+    lineno: int
+    end_lineno: int
+    field_count: int
+    fields: list[DataclassField] = field(default_factory=list)
+    method_names: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class SimilarityEdge:
+    """结构相似性边。"""
+
+    source: str
+    target: str
+    kind: SimilarityKind
+    score: float
+    evidence: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class PatternCluster:
+    """结构模式聚类结果。"""
+
+    kind: SimilarityKind
+    score: float
+    members: list[str]
+    evidence: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

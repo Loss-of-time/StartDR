@@ -8,6 +8,7 @@ from .ast_visitors import (
     ReturnVisitor,
     SideEffectVisitor,
     annotation_text,
+    collect_function_instance_bindings,
     collect_parameter_names,
 )
 from .graph_metrics import (
@@ -33,6 +34,7 @@ from .module_resolution import (
     collect_python_sources,
     merge_class_scope_symbols,
 )
+from .pattern_analysis import analyze_patterns
 from .refactor_advice import build_refactor_suggestions
 
 
@@ -40,6 +42,7 @@ def _collect_function_artifacts(
     function: RawFunction,
     context: ModuleAnalysisContext,
     class_scope_symbols: dict[ScopeName, dict[str, NodeName]],
+    class_attribute_types: dict[ScopeName, dict[str, NodeName]],
     module_symbols: dict[str, dict[str, NodeName]],
 ) -> tuple[FunctionNode, list[FunctionEdge]]:
     """分析单个函数并生成节点及边。
@@ -48,6 +51,7 @@ def _collect_function_artifacts(
         function: 当前函数定义。
         context: 当前函数所在的模块上下文。
         class_scope_symbols: 全局类成员符号表。
+        class_attribute_types: 全局类属性实例类型表。
         module_symbols: 目录内模块顶层符号表。
 
     Returns:
@@ -60,14 +64,25 @@ def _collect_function_artifacts(
     side_effect_visitor = SideEffectVisitor(
         parameter_names=collect_parameter_names(function_node.args)
     )
+    local_instance_types, _ = collect_function_instance_bindings(
+        function=function,
+        scope_symbols=context.collector.scope_symbols,
+        scope_parents=context.scope_parents,
+        class_scope_symbols=class_scope_symbols,
+        class_attribute_types=class_attribute_types,
+        imported_symbols=context.imported_symbols,
+        module_symbols=module_symbols,
+    )
     call_visitor = CallVisitor(
         current_scope=function.qualname,
         current_class=function.class_owner,
         scope_symbols=context.collector.scope_symbols,
         scope_parents=context.scope_parents,
         class_scope_symbols=class_scope_symbols,
+        class_attribute_types=class_attribute_types,
         imported_symbols=context.imported_symbols,
         module_symbols=module_symbols,
+        local_instance_types=local_instance_types,
     )
     for statement in function_node.body:
         complexity_visitor.visit(statement)
@@ -94,6 +109,7 @@ def _collect_function_artifacts(
 def _collect_nodes_and_edges(
     contexts: list[ModuleAnalysisContext],
     class_scope_symbols: dict[ScopeName, dict[str, NodeName]],
+    class_attribute_types: dict[ScopeName, dict[str, NodeName]],
     module_symbols: dict[str, dict[str, NodeName]],
 ) -> tuple[list[FunctionNode], dict[tuple[str, str, str, str | None], FunctionEdge]]:
     """收集全部函数节点与去重前的边。
@@ -101,6 +117,7 @@ def _collect_nodes_and_edges(
     Args:
         contexts: 全部模块上下文。
         class_scope_symbols: 全局类成员符号表。
+        class_attribute_types: 全局类属性实例类型表。
         module_symbols: 目录内模块顶层符号表。
 
     Returns:
@@ -115,12 +132,54 @@ def _collect_nodes_and_edges(
                 function=function,
                 context=context,
                 class_scope_symbols=class_scope_symbols,
+                class_attribute_types=class_attribute_types,
                 module_symbols=module_symbols,
             )
             nodes.append(node)
             for edge in edges:
                 edge_map[(edge.source, edge.target, edge.kind, edge.via)] = edge
     return nodes, edge_map
+
+
+def _collect_class_attribute_types(
+    contexts: list[ModuleAnalysisContext],
+    class_scope_symbols: dict[ScopeName, dict[str, NodeName]],
+    module_symbols: dict[str, dict[str, NodeName]],
+) -> dict[ScopeName, dict[str, NodeName]]:
+    """收集全部类属性上的实例类型信息。
+
+    Args:
+        contexts: 全部模块上下文。
+        class_scope_symbols: 全局类成员符号表。
+        module_symbols: 目录内模块顶层符号表。
+
+    Returns:
+        类限定名到属性实例类型映射。
+    """
+
+    class_attribute_types: dict[ScopeName, dict[str, NodeName]] = {}
+    context: ModuleAnalysisContext
+    function: RawFunction
+    attribute_instance_types: dict[str, NodeName]
+    for context in contexts:
+        for function in context.collector.functions:
+            if function.class_owner is None:
+                continue
+            _, attribute_instance_types = collect_function_instance_bindings(
+                function=function,
+                scope_symbols=context.collector.scope_symbols,
+                scope_parents=context.scope_parents,
+                class_scope_symbols=class_scope_symbols,
+                class_attribute_types=class_attribute_types,
+                imported_symbols=context.imported_symbols,
+                module_symbols=module_symbols,
+            )
+            if not attribute_instance_types:
+                continue
+            class_attribute_types.setdefault(function.class_owner, {}).update(
+                attribute_instance_types
+            )
+    return class_attribute_types
 
 
 def _materialize_graph_edges(
@@ -208,8 +267,18 @@ def _analyze_contexts(
     for context in contexts:
         context.imported_symbols = collect_imported_symbols(context, module_symbols)
     class_scope_symbols = merge_class_scope_symbols(contexts)
+    class_attribute_types = _collect_class_attribute_types(
+        contexts=contexts,
+        class_scope_symbols=class_scope_symbols,
+        module_symbols=module_symbols,
+    )
     # 目的：把目录内全部模块的节点和边统一汇总，输出真正的整体函数图。
-    nodes, edge_map = _collect_nodes_and_edges(contexts, class_scope_symbols, module_symbols)
+    nodes, edge_map = _collect_nodes_and_edges(
+        contexts,
+        class_scope_symbols,
+        class_attribute_types,
+        module_symbols,
+    )
     filtered_edges, indegree_by_node, out_neighbors = _materialize_graph_edges(nodes, edge_map)
     report = _build_graph_report(nodes, filtered_edges, indegree_by_node, out_neighbors)
     artifacts = FunctionGraphArtifacts(
@@ -221,6 +290,11 @@ def _analyze_contexts(
         ),
         report=report,
     )
+    (
+        artifacts.dataclass_nodes,
+        artifacts.similarity_edges,
+        artifacts.pattern_clusters,
+    ) = analyze_patterns(contexts)
     # 目的：目录整体图也沿用同一套建议生成逻辑，避免只输出结构不输出动作。
     artifacts.suggestions.extend(build_refactor_suggestions(artifacts))
     return artifacts

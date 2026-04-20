@@ -1,9 +1,8 @@
 """函数图树化建议工具。"""
 
-import argparse
 import json
 from collections import deque
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 from .graph_metrics import (
@@ -14,7 +13,6 @@ from .graph_metrics import (
     compute_merge_excess_from_parents,
 )
 from .models import FunctionEdge, FunctionGraphArtifacts, FunctionGraphReport, FunctionNode
-from .output import DEFAULT_OUTPUT_DIR, ensure_output_dir, render_dot_svg
 
 
 @dataclass(slots=True)
@@ -421,40 +419,3 @@ def analyze_treeify(graph: FunctionGraphArtifacts) -> tuple[TreeifyArtifacts, li
         utility_nodes=utility_nodes,
     )
     return treeify_artifacts, backbone_edges
-
-
-def main() -> None:
-    """命令行入口。"""
-
-    parser = argparse.ArgumentParser(description="基于函数图 JSON 输出树化建议。")
-    parser.add_argument("--graph-json", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    args = parser.parse_args()
-
-    output_dir = ensure_output_dir(args.output_dir)
-    output_stem = f"{args.graph_json.stem}_treeify"
-    report_output = output_dir / f"{output_stem}.md"
-    dot_output = output_dir / f"{output_stem}.dot"
-    svg_output = output_dir / f"{output_stem}.svg"
-    json_output = output_dir / f"{output_stem}.json"
-
-    graph = load_graph_artifacts(args.graph_json)
-    treeify_artifacts, backbone_edges = analyze_treeify(graph)
-    report_output.write_text(
-        build_markdown_report(graph, treeify_artifacts, backbone_edges),
-        encoding="utf-8",
-    )
-    dot_output.write_text(
-        build_dot(graph, treeify_artifacts, backbone_edges),
-        encoding="utf-8",
-    )
-    json_output.write_text(
-        json.dumps(asdict(treeify_artifacts), ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    # 目的：树化视图和原始函数图保持同一套可视化产物格式。
-    render_dot_svg(dot_output, svg_output)
-
-
-if __name__ == "__main__":
-    main()

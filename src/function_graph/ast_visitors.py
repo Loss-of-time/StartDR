@@ -2,7 +2,7 @@
 
 import ast
 
-from .models import FunctionEdge, NodeName, RawFunction, ScopeName
+from .models import FunctionEdge, NodeName, RawClass, RawFunction, ScopeName
 
 HEAVY_RETURN_NAMES = {
     "csr_matrix",
@@ -85,6 +85,7 @@ class FunctionDefinitionCollector(ast.NodeVisitor):
         self._function_stack: list[str] = []
         self._class_stack: list[str] = []
         self.functions: list[RawFunction] = []
+        self.classes: list[RawClass] = []
         self.scope_symbols: dict[ScopeName | None, dict[str, NodeName]] = {None: {}}
         self.class_scope_symbols: dict[ScopeName, dict[str, NodeName]] = {}
 
@@ -138,6 +139,15 @@ class FunctionDefinitionCollector(ast.NodeVisitor):
         if owner is None and self.module_name is not None:
             # 目的：目录整体分析时为顶层类补模块前缀，让跨文件方法解析有稳定归属。
             qualname = f"{self.module_name}.{node.name}"
+        self.classes.append(
+            RawClass(
+                qualname=qualname,
+                simple_name=node.name,
+                owner=owner,
+                lexical_parent=lexical_parent,
+                node=node,
+            )
+        )
         # 目的：记录类名本身，让 ClassName.method() 也能回溯到类成员表。
         if lexical_parent is not None:
             self.scope_symbols.setdefault(lexical_parent, {})[node.name] = qualname
@@ -418,6 +428,177 @@ class SideEffectVisitor(FunctionBodyVisitor):
         return False
 
 
+class InstanceBindingVisitor(FunctionBodyVisitor):
+    """收集函数体内的实例类型绑定。"""
+
+    def __init__(
+        self,
+        current_scope: str,
+        current_class: str | None,
+        scope_symbols: dict[ScopeName | None, dict[str, NodeName]],
+        scope_parents: dict[ScopeName, ScopeName | None],
+        class_scope_symbols: dict[ScopeName, dict[str, NodeName]],
+        class_attribute_types: dict[ScopeName, dict[str, NodeName]],
+        imported_symbols: dict[str, NodeName],
+        module_symbols: dict[str, dict[str, NodeName]],
+    ) -> None:
+        self.current_scope = current_scope
+        self.current_class = current_class
+        self.scope_symbols = scope_symbols
+        self.scope_parents = scope_parents
+        self.class_scope_symbols = class_scope_symbols
+        self.class_attribute_types = class_attribute_types
+        self.imported_symbols = imported_symbols
+        self.module_symbols = module_symbols
+        self.local_instance_types: dict[str, NodeName] = {}
+        if current_class is None:
+            self.attribute_instance_types: dict[str, NodeName] = {}
+        else:
+            self.attribute_instance_types = dict(class_attribute_types.get(current_class, {}))
+
+    def collect_parameter_types(self, arguments: ast.arguments) -> None:
+        """收集带类注解的形参实例类型。"""
+
+        parameters = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+        parameter: ast.arg
+        for parameter in parameters:
+            instance_type = self._resolve_annotation_class(parameter.annotation)
+            if instance_type is None:
+                continue
+            # 目的：把带类注解的形参提前记成实例，补齐 model.predict_logits 这类调用边。
+            self.local_instance_types[parameter.arg] = instance_type
+        if arguments.vararg is not None:
+            instance_type = self._resolve_annotation_class(arguments.vararg.annotation)
+            if instance_type is not None:
+                self.local_instance_types[arguments.vararg.arg] = instance_type
+        if arguments.kwarg is not None:
+            instance_type = self._resolve_annotation_class(arguments.kwarg.annotation)
+            if instance_type is not None:
+                self.local_instance_types[arguments.kwarg.arg] = instance_type
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        instance_type = self._resolve_instance_type(node.value)
+        if instance_type is not None:
+            target: ast.expr
+            for target in node.targets:
+                self._bind_target(target, instance_type)
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        instance_type = self._resolve_annotation_class(node.annotation)
+        if instance_type is None and node.value is not None:
+            instance_type = self._resolve_instance_type(node.value)
+        if instance_type is not None:
+            self._bind_target(node.target, instance_type)
+        self.generic_visit(node)
+
+    def _bind_target(self, target: ast.expr, instance_type: NodeName) -> None:
+        """把解析出的实例类型绑定到赋值目标。"""
+
+        if isinstance(target, ast.Name):
+            self.local_instance_types[target.id] = instance_type
+            return
+        if (
+            isinstance(target, ast.Attribute)
+            and isinstance(target.value, ast.Name)
+            and target.value.id in {"self", "cls"}
+            and self.current_class is not None
+        ):
+            # 目的：记录 self.xxx / cls.xxx 的实例类型，供其他方法内解析 self.xxx(...)。
+            self.attribute_instance_types[target.attr] = instance_type
+
+    def _resolve_annotation_class(self, annotation: ast.expr | None) -> NodeName | None:
+        """解析类型注解中的类引用。"""
+
+        if annotation is None:
+            return None
+        if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+            left = self._resolve_annotation_class(annotation.left)
+            if left is not None:
+                return left
+            return self._resolve_annotation_class(annotation.right)
+        if isinstance(annotation, ast.Subscript):
+            inner = self._resolve_annotation_class(annotation.slice)
+            if inner is not None:
+                return inner
+            return self._resolve_annotation_class(annotation.value)
+        return self._resolve_class_reference(annotation)
+
+    def _resolve_instance_type(self, expr: ast.expr) -> NodeName | None:
+        """解析表达式对应的实例类型。"""
+
+        if isinstance(expr, ast.Name):
+            return self.local_instance_types.get(expr.id)
+        if isinstance(expr, ast.Attribute):
+            target = self._resolve_value_owner(expr)
+            if target in self.class_scope_symbols:
+                return target
+            return None
+        if isinstance(expr, ast.Call):
+            class_reference = self._resolve_class_reference(expr.func)
+            if class_reference is not None:
+                return class_reference
+            if isinstance(expr.func, ast.Attribute):
+                # 目的：保留 Model(...).to(device) 这类链式构造后的实例类型。
+                return self._resolve_instance_type(expr.func.value)
+        return None
+
+    def _resolve_class_reference(self, expr: ast.expr) -> NodeName | None:
+        """解析表达式是否直接引用了当前分析范围内的类。"""
+
+        target = self._resolve_value_owner(expr)
+        if target in self.class_scope_symbols:
+            return target
+        return None
+
+    def _resolve_value_owner(self, expr: ast.expr) -> NodeName | None:
+        """解析表达式指向的模块、类、方法或实例类型。"""
+
+        if isinstance(expr, ast.Name):
+            target = self._resolve_symbol_name(expr.id)
+            if target is not None:
+                return target
+            return self.local_instance_types.get(expr.id)
+        if not isinstance(expr, ast.Attribute):
+            return None
+        if (
+            isinstance(expr.value, ast.Name)
+            and expr.value.id in {"self", "cls"}
+            and self.current_class is not None
+        ):
+            attribute_type = self.attribute_instance_types.get(expr.attr)
+            if attribute_type is not None:
+                return attribute_type
+            return self.class_scope_symbols.get(self.current_class, {}).get(expr.attr)
+        owner = self._resolve_value_owner(expr.value)
+        if owner is None:
+            return None
+        if owner in self.module_symbols:
+            module_symbol = self.module_symbols[owner].get(expr.attr)
+            if module_symbol is not None:
+                return module_symbol
+            nested_module_name = f"{owner}.{expr.attr}"
+            if nested_module_name in self.module_symbols:
+                return nested_module_name
+        class_member = self.class_scope_symbols.get(owner, {}).get(expr.attr)
+        if class_member is not None:
+            return class_member
+        return self.class_attribute_types.get(owner, {}).get(expr.attr)
+
+    def _resolve_symbol_name(self, name: str) -> NodeName | None:
+        """解析当前作用域可见的裸名符号。"""
+
+        target = resolve_scoped_name(
+            current_scope=self.current_scope,
+            scope_symbols=self.scope_symbols,
+            scope_parents=self.scope_parents,
+            name=name,
+        )
+        if target is not None:
+            return target
+        return self.imported_symbols.get(name)
+
+
 class CallVisitor(FunctionBodyVisitor):
     """提取函数体中的直接调用与回调引用。"""
 
@@ -428,16 +609,20 @@ class CallVisitor(FunctionBodyVisitor):
         scope_symbols: dict[ScopeName | None, dict[str, NodeName]],
         scope_parents: dict[ScopeName, ScopeName | None],
         class_scope_symbols: dict[ScopeName, dict[str, NodeName]],
+        class_attribute_types: dict[ScopeName, dict[str, NodeName]],
         imported_symbols: dict[str, NodeName],
         module_symbols: dict[str, dict[str, NodeName]],
+        local_instance_types: dict[str, NodeName],
     ) -> None:
         self.current_scope = current_scope
         self.current_class = current_class
         self.scope_symbols = scope_symbols
         self.scope_parents = scope_parents
         self.class_scope_symbols = class_scope_symbols
+        self.class_attribute_types = class_attribute_types
         self.imported_symbols = imported_symbols
         self.module_symbols = module_symbols
+        self.local_instance_types = local_instance_types
         self.edges: list[FunctionEdge] = []
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -483,10 +668,24 @@ class CallVisitor(FunctionBodyVisitor):
 
     def _resolve_direct_target(self, expr: ast.expr) -> str | None:
         if isinstance(expr, ast.Name):
-            return self._resolve_name(expr.id)
+            direct_target = self._resolve_name(expr.id)
+            if direct_target is not None:
+                return self._materialize_direct_target(direct_target)
+            instance_type = self.local_instance_types.get(expr.id)
+            if instance_type is not None:
+                return self.class_scope_symbols.get(instance_type, {}).get("forward")
+            return None
         if isinstance(expr, ast.Attribute):
             return self._resolve_attribute(expr)
         return None
+
+    def _materialize_direct_target(self, target: str) -> str | None:
+        """把类名或函数名转换成最终可落边目标。"""
+
+        if target in self.class_scope_symbols:
+            # 目的：把类构造调用落到 __init__，避免类名本身在成图阶段被过滤掉。
+            return self.class_scope_symbols[target].get("__init__")
+        return target
 
     def _resolve_name(self, name: str) -> str | None:
         target = resolve_scoped_name(
@@ -500,14 +699,58 @@ class CallVisitor(FunctionBodyVisitor):
         return self.imported_symbols.get(name)
 
     def _resolve_attribute(self, expr: ast.Attribute) -> str | None:
-        if isinstance(expr.value, ast.Name):
-            if expr.value.id in {"self", "cls"} and self.current_class is not None:
-                return self.class_scope_symbols.get(self.current_class, {}).get(expr.attr)
-            owner = self._resolve_name(expr.value.id)
-        elif isinstance(expr.value, ast.Attribute):
-            owner = self._resolve_attribute(expr.value)
-        else:
-            owner = None
+        if (
+            isinstance(expr.value, ast.Name)
+            and expr.value.id in {"self", "cls"}
+            and self.current_class is not None
+        ):
+            class_method = self.class_scope_symbols.get(self.current_class, {}).get(expr.attr)
+            if class_method is not None:
+                return class_method
+            attribute_type = self.class_attribute_types.get(self.current_class, {}).get(expr.attr)
+            if attribute_type is not None:
+                return self.class_scope_symbols.get(attribute_type, {}).get("forward")
+            return None
+        owner = self._resolve_attribute_owner(expr.value)
+        if owner is None:
+            return None
+        if owner in self.module_symbols:
+            module_symbol = self.module_symbols[owner].get(expr.attr)
+            if module_symbol is not None:
+                return self._materialize_direct_target(module_symbol)
+            nested_module_name = f"{owner}.{expr.attr}"
+            if nested_module_name in self.module_symbols:
+                return nested_module_name
+        class_method = self.class_scope_symbols.get(owner, {}).get(expr.attr)
+        if class_method is not None:
+            return class_method
+        attribute_type = self.class_attribute_types.get(owner, {}).get(expr.attr)
+        if attribute_type is not None:
+            return self.class_scope_symbols.get(attribute_type, {}).get("forward")
+        return None
+
+    def _resolve_attribute_owner(self, expr: ast.expr) -> str | None:
+        """解析属性基对象归属到的模块、类或实例类型。"""
+
+        if isinstance(expr, ast.Name):
+            if expr.id in {"self", "cls"} and self.current_class is not None:
+                return self.current_class
+            owner = self._resolve_name(expr.id)
+            if owner is not None:
+                return owner
+            return self.local_instance_types.get(expr.id)
+        if not isinstance(expr, ast.Attribute):
+            return None
+        if (
+            isinstance(expr.value, ast.Name)
+            and expr.value.id in {"self", "cls"}
+            and self.current_class is not None
+        ):
+            attribute_type = self.class_attribute_types.get(self.current_class, {}).get(expr.attr)
+            if attribute_type is not None:
+                return attribute_type
+            return self.class_scope_symbols.get(self.current_class, {}).get(expr.attr)
+        owner = self._resolve_attribute_owner(expr.value)
         if owner is None:
             return None
         if owner in self.module_symbols:
@@ -517,7 +760,10 @@ class CallVisitor(FunctionBodyVisitor):
             nested_module_name = f"{owner}.{expr.attr}"
             if nested_module_name in self.module_symbols:
                 return nested_module_name
-        return self.class_scope_symbols.get(owner, {}).get(expr.attr)
+        class_method = self.class_scope_symbols.get(owner, {}).get(expr.attr)
+        if class_method is not None:
+            return class_method
+        return self.class_attribute_types.get(owner, {}).get(expr.attr)
 
 
 def dotted_name(node: ast.AST) -> str:
@@ -559,6 +805,34 @@ def collect_parameter_names(arguments: ast.arguments) -> set[str]:
     if arguments.kwarg is not None:
         parameter_names.add(arguments.kwarg.arg)
     return parameter_names
+
+
+def collect_function_instance_bindings(
+    function: RawFunction,
+    scope_symbols: dict[ScopeName | None, dict[str, NodeName]],
+    scope_parents: dict[ScopeName, ScopeName | None],
+    class_scope_symbols: dict[ScopeName, dict[str, NodeName]],
+    class_attribute_types: dict[ScopeName, dict[str, NodeName]],
+    imported_symbols: dict[str, NodeName],
+    module_symbols: dict[str, dict[str, NodeName]],
+) -> tuple[dict[str, NodeName], dict[str, NodeName]]:
+    """收集单个函数中的局部实例绑定和类属性实例绑定。"""
+
+    visitor = InstanceBindingVisitor(
+        current_scope=function.qualname,
+        current_class=function.class_owner,
+        scope_symbols=scope_symbols,
+        scope_parents=scope_parents,
+        class_scope_symbols=class_scope_symbols,
+        class_attribute_types=class_attribute_types,
+        imported_symbols=imported_symbols,
+        module_symbols=module_symbols,
+    )
+    visitor.collect_parameter_types(function.node.args)
+    statement: ast.stmt
+    for statement in function.node.body:
+        visitor.visit(statement)
+    return visitor.local_instance_types, visitor.attribute_instance_types
 
 
 def resolve_scoped_name(

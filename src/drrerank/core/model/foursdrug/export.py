@@ -76,11 +76,16 @@ class _FourSDrugBucketStreamWriter:
             bucket_writers={},
         )
 
-    def write_case(self, symptoms: list[int], medicines: list[int]) -> None:
+    def write_case(
+        self,
+        symptoms: list[int],
+        medicines: list[int],
+        candidate_medicines: list[int],
+    ) -> None:
         """写入单条训练病例到症状集合流与分桶流。"""
 
         self.sym_sets_writer.write(symptoms)
-        self._get_bucket_writer(len(symptoms)).write([symptoms, medicines])
+        self._get_bucket_writer(len(symptoms)).write([symptoms, medicines, candidate_medicines])
 
     def _get_bucket_writer(self, symptom_count: int) -> PickleRowStreamWriter:
         if symptom_count not in self.bucket_writers:
@@ -100,8 +105,10 @@ class _FourSDrugBatchStreamWriter:
     medicine_vocab_size: int
     sym_writer: PickleRowStreamWriter
     drug_writer: PickleRowStreamWriter
+    candidate_writer: PickleRowStreamWriter
     symptom_batch: list[list[int]]
     drug_batch: list[FourSDrugDrugMultiHot]
+    candidate_batch: list[list[int]]
 
     @classmethod
     def create(
@@ -122,15 +129,25 @@ class _FourSDrugBatchStreamWriter:
             drug_writer=stack.enter_context(
                 open_pickle_row_stream_writer(output_paths.drug_train[batch_size]),
             ),
+            candidate_writer=stack.enter_context(
+                open_pickle_row_stream_writer(output_paths.candidate_train[batch_size]),
+            ),
             symptom_batch=[],
             drug_batch=[],
+            candidate_batch=[],
         )
 
-    def append_case(self, symptoms: list[int], medicines: list[int]) -> None:
+    def append_case(
+        self,
+        symptoms: list[int],
+        medicines: list[int],
+        candidate_medicines: list[int],
+    ) -> None:
         """追加单条病例，达到 batch 阈值时立即落盘。"""
 
         self.symptom_batch.append(symptoms)
         self.drug_batch.append(build_drug_multihot(medicines, self.medicine_vocab_size))
+        self.candidate_batch.append(candidate_medicines)
         if len(self.symptom_batch) >= self.batch_size:
             self.flush()
 
@@ -141,8 +158,10 @@ class _FourSDrugBatchStreamWriter:
             return
         self.sym_writer.write(self.symptom_batch)
         self.drug_writer.write(self.drug_batch)
+        self.candidate_writer.write(self.candidate_batch)
         self.symptom_batch = []
         self.drug_batch = []
+        self.candidate_batch = []
 
 
 def update_vocab(unique_values: set[str], row: list[str]) -> None:
@@ -168,12 +187,14 @@ def parse_4sdrug_source_case(row: dict[str, object]) -> FourSDrugSourceCase:
 
     people: dict[str, object] = cast(dict[str, object], row["people"])
     raw_medicines: list[dict[str, object]] = cast(list[dict[str, object]], people["medicine"])
+    raw_top_k_drugs: dict[str, object] = cast(dict[str, object], row["top_k_drugs"])
     return FourSDrugSourceCase(
         symptoms=list(dict.fromkeys(cast(list[str], people["symptom"]))),
         diagnosis=list(dict.fromkeys(cast(list[str], people["diagnosis"]))),
         medicines=list(
             dict.fromkeys(str(raw_medicine["drugid"]) for raw_medicine in raw_medicines)
         ),
+        candidate_medicines=list(dict.fromkeys(str(drug_id) for drug_id in raw_top_k_drugs)),
     )
 
 
@@ -258,13 +279,14 @@ def indexed_case_to_row(
         voc_final: 已构造完成的词表文件对象。
 
     Returns:
-        `[symptoms, diagnosis, medicines]` 形式的编码样本。
+        `[symptoms, diagnosis, medicines, candidate_medicines]` 形式的编码样本。
     """
 
     return [
         index_row(source_case.symptoms, voc_final.sym_voc.word2idx),
         index_row(source_case.diagnosis, voc_final.diag_voc.word2idx),
         index_row(source_case.medicines, voc_final.med_voc.word2idx),
+        index_row(source_case.candidate_medicines, voc_final.med_voc.word2idx),
     ]
 
 
@@ -313,26 +335,32 @@ def build_batched_training_data(
 
     sym_groups: dict[int, list[list[int]]] = {}
     drug_groups: dict[int, list[npt.NDArray[np.bool_]]] = {}
+    candidate_groups: dict[int, list[list[int]]] = {}
     row: list[list[int]]
     symptoms: list[int]
     medicines: list[int]
+    candidate_medicines: list[int]
     symptom_count: int
     drug_multihot: npt.NDArray[np.bool_]
 
     for row in train_rows:
         symptoms = row[0]
         medicines = row[2]
+        candidate_medicines = row[3]
         symptom_count = len(symptoms)
         if symptom_count not in sym_groups:
             sym_groups[symptom_count] = []
             drug_groups[symptom_count] = []
+            candidate_groups[symptom_count] = []
 
         drug_multihot = build_drug_multihot(medicines, medicine_vocab_size)
         sym_groups[symptom_count].append(symptoms)
         drug_groups[symptom_count].append(drug_multihot)
+        candidate_groups[symptom_count].append(candidate_medicines)
 
     sym_train: list[list[list[int]]] = []
     drug_train: list[list[npt.NDArray[np.bool_]]] = []
+    candidate_train: list[list[list[int]]] = []
     symptom_length: int
     sym_group: list[list[int]]
     batch_start: int
@@ -344,8 +372,13 @@ def build_batched_training_data(
             batch_end = batch_start + batch_size
             sym_train.append(sym_group[batch_start:batch_end])
             drug_train.append(drug_groups[symptom_length][batch_start:batch_end])
+            candidate_train.append(candidate_groups[symptom_length][batch_start:batch_end])
 
-    return FourSDrugBatchData(sym_train=sym_train, drug_train=drug_train)
+    return FourSDrugBatchData(
+        sym_train=sym_train,
+        drug_train=drug_train,
+        candidate_train=candidate_train,
+    )
 
 
 def build_output_paths(
@@ -356,10 +389,12 @@ def build_output_paths(
 
     sym_train_paths: dict[int, Path] = {}
     drug_train_paths: dict[int, Path] = {}
+    candidate_train_paths: dict[int, Path] = {}
     batch_size: int
     for batch_size in sorted(set(batch_sizes)):
         sym_train_paths[batch_size] = output_dir / f"sym_train_{batch_size}.pkl"
         drug_train_paths[batch_size] = output_dir / f"drug_train_{batch_size}.pkl"
+        candidate_train_paths[batch_size] = output_dir / f"candidate_train_{batch_size}.pkl"
 
     return FourSDrugOutputPaths(
         output_dir=output_dir,
@@ -372,6 +407,7 @@ def build_output_paths(
         drug_multihots=output_dir / "drug_multihots.pkl",
         sym_train=sym_train_paths,
         drug_train=drug_train_paths,
+        candidate_train=candidate_train_paths,
     )
 
 
@@ -403,6 +439,7 @@ def build_vocabulary_from_inputs(
             update_vocab(symptom_values, source_case.symptoms)
             update_vocab(diagnosis_values, source_case.diagnosis)
             update_vocab(medicine_values, source_case.medicines)
+            update_vocab(medicine_values, source_case.candidate_medicines)
             sample_count += 1
         split_counts.append(sample_count)
 
@@ -431,12 +468,12 @@ def write_split_rows(
     return write_pickle_row_stream(output_path, iter_indexed_rows())
 
 
-def iter_bucket_cases(bucket_path: Path) -> Iterator[tuple[list[int], list[int]]]:
+def iter_bucket_cases(bucket_path: Path) -> Iterator[tuple[list[int], list[int], list[int]]]:
     """流式读取单个症状长度桶中的训练病例。"""
 
     bucket_row: FourSDrugBucketRow
     for bucket_row in iter_pickle_rows(bucket_path):
-        yield bucket_row[0], bucket_row[1]
+        yield bucket_row[0], bucket_row[1], bucket_row[2]
 
 
 def build_train_bucket_paths(
@@ -465,7 +502,8 @@ def build_train_bucket_paths(
         for row in iter_pickle_rows(train_rows_path):
             symptoms: list[int] = row[0]
             medicines: list[int] = row[2]
-            bucket_stream_writer.write_case(symptoms, medicines)
+            candidate_medicines: list[int] = row[3]
+            bucket_stream_writer.write_case(symptoms, medicines, candidate_medicines)
 
             medicine_id: int
             for medicine_id in medicines:
@@ -511,8 +549,11 @@ def write_batched_training_files(
             for symptom_count in sorted(bucket_paths):
                 symptoms: list[int]
                 medicines: list[int]
-                for symptoms, medicines in iter_bucket_cases(bucket_paths[symptom_count]):
-                    batch_writer.append_case(symptoms, medicines)
+                candidate_medicines: list[int]
+                for symptoms, medicines, candidate_medicines in iter_bucket_cases(
+                    bucket_paths[symptom_count]
+                ):
+                    batch_writer.append_case(symptoms, medicines, candidate_medicines)
                 # 目的：保持不同症状长度之间的 batch 不混桶，复用原始 4SDrug 分桶语义。
                 batch_writer.flush()
 

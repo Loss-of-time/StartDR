@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from jaxtyping import Float, Int
+from jaxtyping import Bool, Float, Int
 from scipy.sparse import csr_matrix
 from torch import Tensor
 
@@ -11,7 +11,9 @@ type FourSDrugLogits = Float[Tensor, "batch medicine"]
 type FourSDrugProbabilities = Float[Tensor, "batch medicine"]
 type FourSDrugSymptomTensor = Int[Tensor, "batch symptom"]
 type FourSDrugDrugTensor = Float[Tensor, "batch medicine"]
+type FourSDrugCandidateMaskTensor = Bool[Tensor, "batch medicine"]
 type FourSDrugSimilarIndexTensor = Int[Tensor, "batch"]
+type FourSDrugIndexedRow = list[list[int]]
 
 
 @dataclass(slots=True)
@@ -66,6 +68,7 @@ class FourSDrugInputPaths:
     ddi_A_final: Path
     sym_train: Path
     drug_train: Path
+    candidate_train: Path
 
 
 @dataclass(slots=True)
@@ -74,6 +77,7 @@ class FourSDrugTrainBatch:
 
     symptoms: FourSDrugSymptomTensor
     drugs: FourSDrugDrugTensor
+    candidate_mask: FourSDrugCandidateMaskTensor
     similar_indices: FourSDrugSimilarIndexTensor
 
 
@@ -136,7 +140,7 @@ class FourSDrugLoadedData:
     """4SDrug 训练阶段加载后的数据集合。"""
 
     train_batches: list[FourSDrugTrainBatch]
-    dev_rows: list[list[list[int]]]
-    test_rows: list[list[list[int]]]
+    dev_rows: list[FourSDrugIndexedRow]
+    test_rows: list[FourSDrugIndexedRow]
     ddi_adj: csr_matrix
     vocabulary: FourSDrugVocFile

@@ -168,10 +168,12 @@ uv run rerank-import-tracedr --split test
 说明：
 
 - `patient-candidates` 与 `rerank-import-tracedr` 最终都输出同一种 `{"people": ..., "top_k_drugs": ...}` `jsonl`
-- `rerank-4sdrug-export` 读取三份 TraceDR 风格候选集 `jsonl`，并写出 `4SDrug` 所需 `voc_final.pkl`、`data_{train,eval,test}.pkl`、`ddi_A_final.pkl`、`sym_train_<batch>.pkl`、`drug_train_<batch>.pkl`、`sym_sets.pkl`、`drug_multihots.pkl`
-- 当前 `rerank-4sdrug-export` 已改为流式两遍导出；`data_{train,eval,test}.pkl`、`sym_train_<batch>.pkl`、`drug_train_<batch>.pkl`、`sym_sets.pkl` 在必要时会按行 pickle 写盘，以降低本地导出峰值内存
+- `rerank-4sdrug-export` 读取三份 TraceDR 风格候选集 `jsonl`，并写出 `4SDrug` 所需 `voc_final.pkl`、`data_{train,eval,test}.pkl`、`ddi_A_final.pkl`、`sym_train_<batch>.pkl`、`drug_train_<batch>.pkl`、`candidate_train_<batch>.pkl`、`sym_sets.pkl`、`drug_multihots.pkl`
+- 当前 `rerank-4sdrug-export` 已改为流式两遍导出；`data_{train,eval,test}.pkl`、`sym_train_<batch>.pkl`、`drug_train_<batch>.pkl`、`candidate_train_<batch>.pkl`、`sym_sets.pkl` 在必要时会按行 pickle 写盘，以降低本地导出峰值内存
 - 当前实验约定中，`rerank-4sdrug-export` 会默认写出空的 `ddi_A_final.pkl`；原因是 `Neo4j` 药品节点 `id` 与数据集 `drugid` 尚未对齐
-- `rerank-4sdrug-train` 读取 `rerank-4sdrug-export` 生成的离线目录，兼容旧版整表 pickle 与新版按行 pickle，训练 `4SDrug main1` 变体，并按 `--selection-metric` 保存最佳权重；默认仍使用 `JA`
+- `rerank-4sdrug-export` 现在会把 `top_k_drugs` 候选药物一并并入 `med_voc`，并把每条样本编码为 `[symptoms, diagnosis, gold_medicines, candidate_medicines]`
+- `rerank-4sdrug-train` 读取 `rerank-4sdrug-export` 生成的离线目录，兼容旧版整表 pickle 与新版按行 pickle，训练 `4SDrug main1` 变体，并按 `--selection-metric` 保存最佳权重；训练损失与验证指标都只在 `top_k_drugs` 候选空间内计算，默认仍使用 `JA`
+- 若本地已有旧版 `4SDrug` 导出目录，拉取本次更新后需要重新执行一次 `rerank-4sdrug-export`
 - `rerank-kgd-export` 读取三份 TraceDR 风格候选集 `jsonl`，并将 KGDNet 所需 `pkl` 写入 `--output-dir`
 - 当前实验约定中，`rerank-kgd-export` 会默认写出空的 `ddi_A_final.pkl`；原因是 `Neo4j` 药品节点 `id` 与数据集 `drugid` 尚未对齐
 - `rerank-kgd-train` 读取 `rerank-kgd-export` 生成的离线目录，并按 `--selection-metric` 输出最佳权重与指标

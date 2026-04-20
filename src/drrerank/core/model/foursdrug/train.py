@@ -19,7 +19,9 @@ from .export import build_batched_training_data
 from .metrics import aggregate_metrics, calculate_metrics
 from .model import FourSDrugModel
 from .schema import (
+    FourSDrugCandidateMaskTensor,
     FourSDrugForwardResult,
+    FourSDrugIndexedRow,
     FourSDrugInputPaths,
     FourSDrugLoadedData,
     FourSDrugMetrics,
@@ -56,6 +58,7 @@ def build_input_paths(input_dir: Path, batch_size: int) -> FourSDrugInputPaths:
         ddi_A_final=input_dir / "ddi_A_final.pkl",
         sym_train=input_dir / f"sym_train_{batch_size}.pkl",
         drug_train=input_dir / f"drug_train_{batch_size}.pkl",
+        candidate_train=input_dir / f"candidate_train_{batch_size}.pkl",
     )
 
 
@@ -79,11 +82,33 @@ def load_vocabulary(voc_path: Path) -> FourSDrugVocFile:
     )
 
 
-def load_split_rows(split_path: Path, limit: int | None) -> list[list[list[int]]]:
+def load_split_rows(split_path: Path, limit: int | None) -> list[FourSDrugIndexedRow]:
     """加载单个 split 的索引病例。"""
 
     # 目的：兼容新版按行 pickle 导出，同时保持旧版整表 pickle 仍可直接读取。
     return load_pickle_rows(split_path, limit)
+
+
+def build_candidate_mask(
+    candidate_batches: list[list[int]],
+    medicine_vocab_size: int,
+    device: torch.device,
+) -> FourSDrugCandidateMaskTensor:
+    """把候选药物索引列表转换成 batch 级布尔掩码。"""
+
+    candidate_mask_array: np.ndarray = np.zeros(
+        (len(candidate_batches), medicine_vocab_size),
+        dtype=np.bool_,
+    )
+    row_index: int
+    candidate_ids: list[int]
+    for row_index, candidate_ids in enumerate(candidate_batches):
+        if candidate_ids:
+            candidate_mask_array[row_index, np.asarray(candidate_ids, dtype=np.int64) - 1] = True
+    return cast(
+        FourSDrugCandidateMaskTensor,
+        torch.tensor(candidate_mask_array, dtype=torch.bool, device=device),
+    )
 
 
 def build_similarity_indices(symptom_batches: list[list[list[int]]]) -> list[list[int]]:
@@ -121,7 +146,7 @@ def build_similarity_indices(symptom_batches: list[list[list[int]]]) -> list[lis
 
 def build_train_batches(
     input_paths: FourSDrugInputPaths,
-    train_rows: list[list[list[int]]],
+    train_rows: list[FourSDrugIndexedRow],
     medicine_vocab_size: int,
     device: torch.device,
     batch_size: int,
@@ -131,23 +156,33 @@ def build_train_batches(
 
     symptom_batches: list[list[list[int]]]
     drug_batches: list[list[np.ndarray]]
-    if train_limit is None and input_paths.sym_train.exists() and input_paths.drug_train.exists():
+    candidate_batches: list[list[list[int]]]
+    if (
+        train_limit is None
+        and input_paths.sym_train.exists()
+        and input_paths.drug_train.exists()
+        and input_paths.candidate_train.exists()
+    ):
         # 目的：兼容新版按行 pickle batch 缓存，同时继续支持旧版整表缓存。
         symptom_batches = load_pickle_rows(input_paths.sym_train)
         drug_batches = load_pickle_rows(input_paths.drug_train)
+        candidate_batches = load_pickle_rows(input_paths.candidate_train)
     else:
         rebuilt_batches = build_batched_training_data(train_rows, batch_size, medicine_vocab_size)
         symptom_batches = rebuilt_batches.sym_train
         drug_batches = rebuilt_batches.drug_train
+        candidate_batches = rebuilt_batches.candidate_train
 
     similarity_indices: list[list[int]] = build_similarity_indices(symptom_batches)
     train_batches: list[FourSDrugTrainBatch] = []
     symptom_batch: list[list[int]]
     drug_batch: list[np.ndarray]
+    candidate_batch: list[list[int]]
     similar_batch: list[int]
-    for symptom_batch, drug_batch, similar_batch in zip(
+    for symptom_batch, drug_batch, candidate_batch, similar_batch in zip(
         symptom_batches,
         drug_batches,
+        candidate_batches,
         similarity_indices,
         strict=True,
     ):
@@ -161,6 +196,11 @@ def build_train_batches(
             dtype=torch.float32,
             device=device,
         )
+        candidate_mask: FourSDrugCandidateMaskTensor = build_candidate_mask(
+            candidate_batch,
+            medicine_vocab_size,
+            device,
+        )
         similar_tensor: Tensor = torch.tensor(
             np.asarray(similar_batch, dtype=np.int64),
             dtype=torch.long,
@@ -170,6 +210,7 @@ def build_train_batches(
             FourSDrugTrainBatch(
                 symptoms=symptom_tensor,
                 drugs=drug_tensor,
+                candidate_mask=candidate_mask,
                 similar_indices=similar_tensor,
             ),
         )
@@ -181,9 +222,11 @@ def load_data(config: FourSDrugTrainConfig, device: torch.device) -> FourSDrugLo
 
     input_paths: FourSDrugInputPaths = build_input_paths(config.input_dir, config.batch_size)
     vocabulary: FourSDrugVocFile = load_vocabulary(input_paths.voc_final)
-    train_rows: list[list[list[int]]] = load_split_rows(input_paths.data_train, config.train_limit)
-    dev_rows: list[list[list[int]]] = load_split_rows(input_paths.data_eval, config.dev_limit)
-    test_rows: list[list[list[int]]] = []
+    train_rows: list[FourSDrugIndexedRow] = load_split_rows(
+        input_paths.data_train, config.train_limit
+    )
+    dev_rows: list[FourSDrugIndexedRow] = load_split_rows(input_paths.data_eval, config.dev_limit)
+    test_rows: list[FourSDrugIndexedRow] = []
     if input_paths.data_test.exists():
         test_rows = load_split_rows(input_paths.data_test, config.test_limit)
     ddi_adj: csr_matrix = cast(csr_matrix, load_pickle(input_paths.ddi_A_final))
@@ -227,18 +270,35 @@ def build_ddi_tensor(ddi_adj: csr_matrix, device: torch.device) -> Tensor:
     ).coalesce()
 
 
+def compute_candidate_mean(
+    values: Tensor,
+    candidate_mask: FourSDrugCandidateMaskTensor,
+) -> Tensor:
+    """按候选药物掩码计算张量均值。"""
+
+    candidate_weights: Tensor = candidate_mask.float()
+    return (values * candidate_weights).sum() / candidate_weights.sum().clamp(min=1.0)
+
+
 def compute_loss(
     result: FourSDrugForwardResult,
     drugs: Tensor,
+    candidate_mask: FourSDrugCandidateMaskTensor,
     alpha: float,
     beta: float,
 ) -> Tensor:
     """计算 4SDrug 训练损失。"""
 
-    prediction_loss: Tensor = F.binary_cross_entropy_with_logits(result.logits, drugs)
+    prediction_loss: Tensor = compute_candidate_mean(
+        F.binary_cross_entropy_with_logits(result.logits, drugs, reduction="none"),
+        candidate_mask,
+    )
     probabilities: Tensor = result.probabilities.clamp(min=1e-8, max=1.0)
-    # 目的：保留原始 4SDrug 中对高置信预测施加熵约束的主设计。
-    entropy: Tensor = -(probabilities * torch.log(probabilities)).mean()
+    # 目的：把多标签监督限制在候选集内，避免非候选药物主导训练梯度。
+    entropy: Tensor = compute_candidate_mean(
+        -(probabilities * torch.log(probabilities)),
+        candidate_mask,
+    )
     return (
         prediction_loss + 0.5 * entropy + alpha * result.augmentation_loss + beta * result.ddi_loss
     )
@@ -246,7 +306,7 @@ def compute_loss(
 
 def evaluate_model(
     model: FourSDrugModel,
-    rows: list[list[list[int]]],
+    rows: list[FourSDrugIndexedRow],
     ddi_adj: csr_matrix,
     threshold: float,
     device: torch.device,
@@ -258,7 +318,7 @@ def evaluate_model(
     with torch.no_grad():
         # 目的：统一复用可自适应的进度输出，保证非 TTY 环境下验证阶段也有可见反馈。
         with build_progress(rows, desc="验证", leave=False) as progress:
-            row: list[list[int]]
+            row: FourSDrugIndexedRow
             for row in progress:
                 symptoms: Tensor = torch.tensor([row[0]], dtype=torch.long, device=device)
                 target: Tensor = torch.zeros(
@@ -267,17 +327,27 @@ def evaluate_model(
                     device=device,
                 )
                 medicine_ids: list[int] = list(dict.fromkeys(row[2]))
+                candidate_ids: list[int] = list(dict.fromkeys(row[3]))
                 if medicine_ids:
                     target[0, np.asarray(medicine_ids, dtype=np.int64) - 1] = 1.0
+                candidate_mask: FourSDrugCandidateMaskTensor = build_candidate_mask(
+                    [candidate_ids],
+                    model.config.medicine_vocab_size,
+                    device,
+                )
                 logits: Tensor = model.predict_logits(symptoms)
                 probabilities: Tensor = torch.sigmoid(logits)
                 loss: float = float(
-                    F.binary_cross_entropy_with_logits(logits, target).item(),
+                    compute_candidate_mean(
+                        F.binary_cross_entropy_with_logits(logits, target, reduction="none"),
+                        candidate_mask,
+                    ).item(),
                 )
                 metrics_list.append(
                     calculate_metrics(
                         probabilities=probabilities[0].detach().cpu().numpy(),
                         gold_drug_ids=medicine_ids,
+                        candidate_drug_ids=candidate_ids,
                         ddi_adj=ddi_adj,
                         threshold=threshold,
                         loss=loss,
@@ -382,6 +452,7 @@ class FourSDrugTrainAdapter(
                 loss_tensor: Tensor = compute_loss(
                     result=result,
                     drugs=batch.drugs,
+                    candidate_mask=batch.candidate_mask,
                     alpha=state.config.alpha,
                     beta=state.config.beta,
                 )
@@ -398,7 +469,7 @@ class FourSDrugTrainAdapter(
     def evaluate(self, state: FourSDrugTrainState, split: str) -> ExperimentEvalResult:
         """执行指定切分的 4SDrug 评测。"""
 
-        rows: list[list[list[int]]]
+        rows: list[FourSDrugIndexedRow]
         if split == "dev":
             rows = state.loaded_data.dev_rows
         else:

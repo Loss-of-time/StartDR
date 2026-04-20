@@ -10,20 +10,37 @@ from .schema import FourSDrugMetrics
 
 type FourSDrugRankedIds = npt.NDArray[np.int64]
 type FourSDrugProbabilityArray = npt.NDArray[np.float32] | npt.NDArray[np.float64]
+type FourSDrugCandidateIds = list[int]
 
 
-def _build_ranked_drug_ids(probabilities: FourSDrugProbabilityArray) -> FourSDrugRankedIds:
+def _build_ranked_drug_ids(
+    probabilities: FourSDrugProbabilityArray,
+    candidate_drug_ids: FourSDrugCandidateIds | None = None,
+) -> FourSDrugRankedIds:
     """按分数降序构造 1-based 药物排序结果。"""
 
+    if candidate_drug_ids is not None:
+        if not candidate_drug_ids:
+            return np.asarray([], dtype=np.int64)
+        candidate_indices: FourSDrugRankedIds = np.asarray(candidate_drug_ids, dtype=np.int64) - 1
+        ranked_offsets: FourSDrugRankedIds = np.argsort(probabilities[candidate_indices])[
+            ::-1
+        ].astype(np.int64)
+        return candidate_indices[ranked_offsets] + 1
     return np.argsort(probabilities)[::-1].astype(np.int64) + 1
 
 
 def _build_predicted_drug_ids(
     probabilities: FourSDrugProbabilityArray,
     threshold: float,
+    candidate_drug_ids: FourSDrugCandidateIds | None = None,
 ) -> list[int]:
     """按阈值构造预测药物列表。"""
 
+    if candidate_drug_ids is not None:
+        return [
+            drug_id for drug_id in candidate_drug_ids if probabilities[drug_id - 1] >= threshold
+        ]
     predicted_indices: FourSDrugRankedIds = np.flatnonzero(probabilities >= threshold).astype(
         np.int64,
     )
@@ -80,6 +97,7 @@ def _get_ddi_rate(
 def calculate_metrics(
     probabilities: FourSDrugProbabilityArray,
     gold_drug_ids: list[int],
+    candidate_drug_ids: FourSDrugCandidateIds | None,
     ddi_adj: csr_matrix,
     threshold: float,
     loss: float = 0.0,
@@ -89,6 +107,7 @@ def calculate_metrics(
     Args:
         probabilities: 模型输出概率，药物维为 0-based。
         gold_drug_ids: 金标药物 id，保持 1-based。
+        candidate_drug_ids: 当前样本允许排序与预测的候选药物 id。
         ddi_adj: 1-based DDI 邻接矩阵。
         threshold: 多标签预测阈值。
         loss: 样本损失。
@@ -98,8 +117,14 @@ def calculate_metrics(
     """
 
     gold_set: set[int] = set(dict.fromkeys(gold_drug_ids))
-    ranked_drug_ids: FourSDrugRankedIds = _build_ranked_drug_ids(probabilities)
-    predicted_drug_ids: list[int] = _build_predicted_drug_ids(probabilities, threshold)
+    if candidate_drug_ids is not None:
+        gold_set = gold_set.intersection(candidate_drug_ids)
+    ranked_drug_ids: FourSDrugRankedIds = _build_ranked_drug_ids(probabilities, candidate_drug_ids)
+    predicted_drug_ids: list[int] = _build_predicted_drug_ids(
+        probabilities,
+        threshold,
+        candidate_drug_ids,
+    )
     predicted_set: set[int] = set(predicted_drug_ids)
     top_1_ids: set[int] = {int(ranked_drug_ids[0])} if ranked_drug_ids.size else set()
     top_5_ids: list[int] = [int(drug_id) for drug_id in ranked_drug_ids[:5]]

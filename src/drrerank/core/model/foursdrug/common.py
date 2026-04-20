@@ -18,6 +18,7 @@ class FourSDrugSourceCase:
     symptoms: list[str]
     diagnosis: list[str]
     medicines: list[str]
+    candidate_medicines: list[str]
 
 
 @dataclass(slots=True)
@@ -61,6 +62,7 @@ class FourSDrugBatchData:
 
     sym_train: list[list[list[int]]]
     drug_train: list[list[FourSDrugDrugMultiHot]]
+    candidate_train: list[list[list[int]]]
 
 
 @dataclass(slots=True)
@@ -91,6 +93,7 @@ class FourSDrugOutputPaths:
     drug_multihots: Path
     sym_train: dict[int, Path]
     drug_train: dict[int, Path]
+    candidate_train: dict[int, Path]
 
 
 def build_symmetric_adj(size: int, upper_edges: set[FourSDrugUpperEdge]) -> csr_matrix:

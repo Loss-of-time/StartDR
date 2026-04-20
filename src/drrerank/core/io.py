@@ -1,5 +1,5 @@
 import json
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL, dump, load
 from typing import cast
@@ -42,6 +42,35 @@ def load_pickle(path: Path) -> object:
         return load(file)
 
 
+def iter_pickle_rows[T](
+    path: Path,
+) -> Iterator[T]:
+    """流式读取按行 pickle 的记录文件，兼容旧版整表 `list` 格式。
+
+    Args:
+        path: 待读取文件路径。
+
+    Yields:
+        记录流中的单条记录。
+    """
+
+    with path.open("rb") as file:
+        first_object: object = load(file)
+        if (
+            isinstance(first_object, dict)
+            and first_object.get("format") == PICKLE_ROW_STREAM_FORMAT
+        ):
+            while True:
+                try:
+                    yield cast(T, load(file))
+                except EOFError:
+                    break
+            return
+
+    rows = cast(list[T], first_object)
+    yield from rows
+
+
 def load_pickle_rows[T](
     path: Path,
     limit: int | None = None,
@@ -56,21 +85,13 @@ def load_pickle_rows[T](
         记录列表。
     """
 
-    with path.open("rb") as file:
-        first_object: object = load(file)
-        if isinstance(first_object, dict) and first_object.get("format") == PICKLE_ROW_STREAM_FORMAT:
-            rows: list[T] = []
-            while limit is None or len(rows) < limit:
-                try:
-                    rows.append(cast(T, load(file)))
-                except EOFError:
-                    break
-            return rows
-
-    rows = cast(list[T], first_object)
-    if limit is None:
-        return rows
-    return rows[:limit]
+    rows: list[T] = []
+    row: T
+    for row in iter_pickle_rows(path):
+        rows.append(row)
+        if limit is not None and len(rows) >= limit:
+            break
+    return rows
 
 
 def write_pickle_row_stream[T](

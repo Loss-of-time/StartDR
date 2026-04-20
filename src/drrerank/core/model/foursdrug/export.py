@@ -1,23 +1,25 @@
 """4SDrug 离线数据导出流程。"""
 
+import json
+import shutil
+from collections.abc import Iterator
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
+from pickle import dump as pickle_dump
+from typing import BinaryIO, cast
 
 import dill
 import numpy as np
 import numpy.typing as npt
 from scipy.sparse import csr_matrix
 
-from ...schema import TraceDRSample
-from ...tracedr import load_tracedr_samples
+from ...io import PICKLE_ROW_STREAM_FORMAT, iter_pickle_rows, write_pickle_row_stream
 from .common import (
     FourSDrugBatchData,
-    FourSDrugExportArtifacts,
-    FourSDrugIndexedCases,
     FourSDrugOutputPaths,
     FourSDrugSourceCase,
-    FourSDrugStringCases,
     FourSDrugVocabulary,
     FourSDrugVocFile,
 )
@@ -38,105 +40,114 @@ class FourSDrugExportConfig:
     batch_sizes: list[int]
 
 
-def build_vocab(rows: list[list[str]]) -> dict[str, int]:
-    """构造 1-based 词表。
+@dataclass(slots=True)
+class PickleRowStreamWriter:
+    """按行 pickle 写盘器。"""
+
+    file: BinaryIO
+
+
+def open_pickle_row_stream_writer(path: Path) -> PickleRowStreamWriter:
+    """打开按行 pickle 写盘器。"""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    file: BinaryIO = path.open("wb")
+    pickle_dump(
+        {"format": PICKLE_ROW_STREAM_FORMAT},
+        file,
+        protocol=HIGHEST_PROTOCOL,
+    )
+    return PickleRowStreamWriter(file=file)
+
+
+def write_pickle_row(writer: PickleRowStreamWriter, row: object) -> None:
+    """向按行 pickle 文件追加单条记录。"""
+
+    pickle_dump(row, writer.file, protocol=HIGHEST_PROTOCOL)
+
+
+def update_vocab(unique_values: set[str], row: list[str]) -> None:
+    """按单行字段增量更新词表值集合。
 
     Args:
-        rows: 待编码字段的二维字符串列表。
+        unique_values: 待更新的去重值集合。
+        row: 当前字段行。
+    """
+
+    unique_values.update(row)
+
+
+def parse_4sdrug_source_case(row: dict[str, object]) -> FourSDrugSourceCase:
+    """从单条 TraceDR 样本提取 4SDrug 所需字段。
+
+    Args:
+        row: 原始 `jsonl` 行对象。
+
+    Returns:
+        4SDrug 导出所需的最小病例对象。
+    """
+
+    people: dict[str, object] = cast(dict[str, object], row["people"])
+    raw_medicines: list[dict[str, object]] = cast(list[dict[str, object]], people["medicine"])
+    return FourSDrugSourceCase(
+        symptoms=list(dict.fromkeys(cast(list[str], people["symptom"]))),
+        diagnosis=list(dict.fromkeys(cast(list[str], people["diagnosis"]))),
+        medicines=list(
+            dict.fromkeys(str(raw_medicine["drugid"]) for raw_medicine in raw_medicines)
+        ),
+    )
+
+
+def iter_4sdrug_source_cases(input_path: Path) -> Iterator[FourSDrugSourceCase]:
+    """流式遍历单个 split 的 4SDrug 字符串病例。
+
+    Args:
+        input_path: TraceDR 风格 `jsonl` 路径。
+
+    Yields:
+        单条 4SDrug 病例。
+    """
+
+    with input_path.open(encoding="utf-8") as file:
+        line: str
+        for line in file:
+            yield parse_4sdrug_source_case(cast(dict[str, object], json.loads(line)))
+
+
+def build_vocab(unique_values: set[str]) -> dict[str, int]:
+    """根据去重值集合构造 1-based 词表。
+
+    Args:
+        unique_values: 已去重的字段值集合。
 
     Returns:
         从 1 开始编号的词表。
     """
 
-    unique_values: set[str] = set()
-    row: list[str]
-    for row in rows:
-        unique_values.update(row)
-
     vocabulary: dict[str, int] = {}
     index: int
     value: str
     for index, value in enumerate(sorted(unique_values), start=1):
-        # 目的：保持 4SDrug 原始预处理阶段的 1-based 编号与排序建表习惯。
+        # 目的：保持 4SDrug 原始预处理阶段的稳定排序与 1-based 编号习惯。
         vocabulary[value] = index
     return vocabulary
 
 
-def index_rows(
-    rows: list[list[str]],
+def index_row(
+    row: list[str],
     vocabulary: dict[str, int],
-) -> list[list[int]]:
+) -> list[int]:
     """按既有词表将文本行转成索引行。
 
     Args:
-        rows: 字符串行。
+        row: 字符串行。
         vocabulary: 词表。
 
     Returns:
         对应的索引行。
     """
 
-    indexed_rows: list[list[int]] = []
-    row: list[str]
-    for row in rows:
-        indexed_rows.append([vocabulary[value] for value in row])
-    return indexed_rows
-
-
-def load_4sdrug_string_cases(input_path: Path) -> FourSDrugStringCases:
-    """读取单个 split 的 4SDrug 字符串病例。
-
-    Args:
-        input_path: TraceDR 风格 `jsonl` 路径。
-
-    Returns:
-        只保留 4SDrug 需要字段的病例集合。
-    """
-
-    samples = load_tracedr_samples(input_path)
-    source_cases: list[FourSDrugSourceCase] = []
-    source_case: FourSDrugSourceCase
-    sample: TraceDRSample
-    for sample in samples:
-        # 目的：严格对齐 4SDrug 原始直接推荐口径，只使用金标准药物集合。
-        source_case = FourSDrugSourceCase(
-            symptoms=list(dict.fromkeys(sample.people.symptom)),
-            diagnosis=list(dict.fromkeys(sample.people.diagnosis)),
-            medicines=list(
-                dict.fromkeys(medicine.drugid for medicine in sample.people.medicine),
-            ),
-        )
-        source_cases.append(source_case)
-    return FourSDrugStringCases(
-        symptoms=[case.symptoms for case in source_cases],
-        diagnosis=[case.diagnosis for case in source_cases],
-        medicines=[case.medicines for case in source_cases],
-    )
-
-
-def merge_string_cases(*datasets: FourSDrugStringCases) -> FourSDrugStringCases:
-    """合并多个 split 的字符串病例。
-
-    Args:
-        *datasets: 待合并的字符串病例集合。
-
-    Returns:
-        合并后的字符串病例集合。
-    """
-
-    merged_symptoms: list[list[str]] = []
-    merged_diagnosis: list[list[str]] = []
-    merged_medicines: list[list[str]] = []
-    dataset: FourSDrugStringCases
-    for dataset in datasets:
-        merged_symptoms.extend(dataset.symptoms)
-        merged_diagnosis.extend(dataset.diagnosis)
-        merged_medicines.extend(dataset.medicines)
-    return FourSDrugStringCases(
-        symptoms=merged_symptoms,
-        diagnosis=merged_diagnosis,
-        medicines=merged_medicines,
-    )
+    return [vocabulary[value] for value in row]
 
 
 def build_vocab_file_entry(vocabulary: dict[str, int]) -> FourSDrugVocabulary:
@@ -157,53 +168,25 @@ def build_vocab_file_entry(vocabulary: dict[str, int]) -> FourSDrugVocabulary:
     return FourSDrugVocabulary(word2idx=vocabulary, idx2word=idx2word)
 
 
-def index_case_rows(
-    string_cases: FourSDrugStringCases,
-    symptom_vocab: dict[str, int],
-    diagnosis_vocab: dict[str, int],
-    medicine_vocab: dict[str, int],
-) -> FourSDrugIndexedCases:
-    """把字符串病例按词表转成索引病例。
+def indexed_case_to_row(
+    source_case: FourSDrugSourceCase,
+    voc_final: FourSDrugVocFile,
+) -> list[list[int]]:
+    """把单条病例编码成 4SDrug 原始 `pkl` 行结构。
 
     Args:
-        string_cases: 字符串病例集合。
-        symptom_vocab: 症状词表。
-        diagnosis_vocab: 诊断词表。
-        medicine_vocab: 药物词表。
+        source_case: 原始字符串病例。
+        voc_final: 已构造完成的词表文件对象。
 
     Returns:
-        索引化后的病例集合。
+        `[symptoms, diagnosis, medicines]` 形式的编码样本。
     """
 
-    return FourSDrugIndexedCases(
-        symptoms=index_rows(string_cases.symptoms, symptom_vocab),
-        diagnosis=index_rows(string_cases.diagnosis, diagnosis_vocab),
-        medicines=index_rows(string_cases.medicines, medicine_vocab),
-    )
-
-
-def indexed_cases_to_rows(indexed_cases: FourSDrugIndexedCases) -> list[list[list[int]]]:
-    """把索引病例转成 4SDrug 原始 `pkl` 行结构。
-
-    Args:
-        indexed_cases: 索引化病例集合。
-
-    Returns:
-        `[symptoms, diagnosis, medicines]` 形式的样本列表。
-    """
-
-    rows: list[list[list[int]]] = []
-    symptoms: list[int]
-    diagnosis: list[int]
-    medicines: list[int]
-    for symptoms, diagnosis, medicines in zip(
-        indexed_cases.symptoms,
-        indexed_cases.diagnosis,
-        indexed_cases.medicines,
-        strict=True,
-    ):
-        rows.append([symptoms, diagnosis, medicines])
-    return rows
+    return [
+        index_row(source_case.symptoms, voc_final.sym_voc.word2idx),
+        index_row(source_case.diagnosis, voc_final.diag_voc.word2idx),
+        index_row(source_case.medicines, voc_final.med_voc.word2idx),
+    ]
 
 
 def build_ddi_adj(medicine_vocab: dict[str, int]) -> csr_matrix:
@@ -221,38 +204,16 @@ def build_ddi_adj(medicine_vocab: dict[str, int]) -> csr_matrix:
     return csr_matrix((medicine_count, medicine_count), dtype=np.uint8)
 
 
-def build_drug_multihots(
-    train_rows: list[list[list[int]]],
+def build_drug_multihot(
+    medicines: list[int],
     medicine_vocab_size: int,
-) -> csr_matrix:
-    """构造训练集药物 multi-hot 稀疏矩阵。
+) -> npt.NDArray[np.bool_]:
+    """把药物集合转换成单条 multi-hot 向量。"""
 
-    Args:
-        train_rows: `data_train.pkl` 行结构。
-        medicine_vocab_size: 药物词表大小，不含 0 占位。
-
-    Returns:
-        训练集药物 multi-hot CSR 稀疏矩阵。
-    """
-
-    row_indices: list[int] = []
-    col_indices: list[int] = []
-    sample_index: int
-    row: list[list[int]]
-    medicine_id: int
-
-    for sample_index, row in enumerate(train_rows):
-        for medicine_id in row[2]:
-            row_indices.append(sample_index)
-            # 目的：保留样本中的 1-based 药物 id，同时把 multi-hot 列索引转换成 0-based。
-            col_indices.append(medicine_id - 1)
-
-    data: npt.NDArray[np.int8] = np.ones(len(row_indices), dtype=np.int8)
-    return csr_matrix(
-        (data, (row_indices, col_indices)),
-        shape=(len(train_rows), medicine_vocab_size),
-        dtype=np.int8,
-    )
+    drug_multihot: npt.NDArray[np.bool_] = np.zeros(medicine_vocab_size, dtype=np.bool_)
+    if medicines:
+        drug_multihot[np.asarray(medicines, dtype=np.int64) - 1] = True
+    return drug_multihot
 
 
 def build_batched_training_data(
@@ -287,9 +248,7 @@ def build_batched_training_data(
             sym_groups[symptom_count] = []
             drug_groups[symptom_count] = []
 
-        drug_multihot = np.zeros(medicine_vocab_size, dtype=np.bool_)
-        if medicines:
-            drug_multihot[np.asarray(medicines, dtype=np.int64) - 1] = True
+        drug_multihot = build_drug_multihot(medicines, medicine_vocab_size)
         sym_groups[symptom_count].append(symptoms)
         drug_groups[symptom_count].append(drug_multihot)
 
@@ -310,106 +269,20 @@ def build_batched_training_data(
     return FourSDrugBatchData(sym_train=sym_train, drug_train=drug_train)
 
 
-def build_4sdrug_export_artifacts(
-    train_cases: FourSDrugStringCases,
-    dev_cases: FourSDrugStringCases,
-    test_cases: FourSDrugStringCases,
-    batch_sizes: list[int],
-) -> FourSDrugExportArtifacts:
-    """构造 4SDrug 全部离线产物。
-
-    Args:
-        train_cases: 训练集字符串病例。
-        dev_cases: 验证集字符串病例。
-        test_cases: 测试集字符串病例。
-        batch_sizes: 需要导出的 batch size 列表。
-
-    Returns:
-        写盘前的全部 4SDrug 产物。
-    """
-
-    all_string_cases: FourSDrugStringCases = merge_string_cases(train_cases, dev_cases, test_cases)
-    symptom_vocab: dict[str, int] = build_vocab(all_string_cases.symptoms)
-    diagnosis_vocab: dict[str, int] = build_vocab(all_string_cases.diagnosis)
-    medicine_vocab: dict[str, int] = build_vocab(all_string_cases.medicines)
-
-    train_indexed_cases: FourSDrugIndexedCases = index_case_rows(
-        train_cases,
-        symptom_vocab,
-        diagnosis_vocab,
-        medicine_vocab,
-    )
-    dev_indexed_cases: FourSDrugIndexedCases = index_case_rows(
-        dev_cases,
-        symptom_vocab,
-        diagnosis_vocab,
-        medicine_vocab,
-    )
-    test_indexed_cases: FourSDrugIndexedCases = index_case_rows(
-        test_cases,
-        symptom_vocab,
-        diagnosis_vocab,
-        medicine_vocab,
-    )
-
-    data_train: list[list[list[int]]] = indexed_cases_to_rows(train_indexed_cases)
-    data_eval: list[list[list[int]]] = indexed_cases_to_rows(dev_indexed_cases)
-    data_test: list[list[list[int]]] = indexed_cases_to_rows(test_indexed_cases)
-    sym_sets: list[list[int]] = [row[0] for row in data_train]
-    drug_multihots: csr_matrix = build_drug_multihots(data_train, len(medicine_vocab))
-
-    unique_batch_sizes: list[int] = sorted(set(batch_sizes))
-    batch_data: dict[int, FourSDrugBatchData] = {}
-    batch_size: int
-    for batch_size in unique_batch_sizes:
-        batch_data[batch_size] = build_batched_training_data(
-            data_train,
-            batch_size,
-            len(medicine_vocab),
-        )
-
-    voc_final: FourSDrugVocFile = FourSDrugVocFile(
-        sym_voc=build_vocab_file_entry(symptom_vocab),
-        diag_voc=build_vocab_file_entry(diagnosis_vocab),
-        med_voc=build_vocab_file_entry(medicine_vocab),
-    )
-    ddi_A_final: csr_matrix = build_ddi_adj(medicine_vocab)
-    return FourSDrugExportArtifacts(
-        voc_final=voc_final,
-        data_train=data_train,
-        data_eval=data_eval,
-        data_test=data_test,
-        ddi_A_final=ddi_A_final,
-        sym_sets=sym_sets,
-        drug_multihots=drug_multihots,
-        batch_data=batch_data,
-    )
-
-
-def save_4sdrug_export_artifacts(
+def build_output_paths(
     output_dir: Path,
-    artifacts: FourSDrugExportArtifacts,
+    batch_sizes: list[int],
 ) -> FourSDrugOutputPaths:
-    """把 4SDrug 离线产物写入输出目录。
+    """构造 4SDrug 导出输出路径集合。"""
 
-    Args:
-        output_dir: 输出目录。
-        artifacts: 待写出的 4SDrug 产物。
-
-    Returns:
-        实际写出的路径集合。
-    """
-
-    output_dir.mkdir(parents=True, exist_ok=True)
     sym_train_paths: dict[int, Path] = {}
     drug_train_paths: dict[int, Path] = {}
     batch_size: int
-
-    for batch_size in artifacts.batch_data:
+    for batch_size in sorted(set(batch_sizes)):
         sym_train_paths[batch_size] = output_dir / f"sym_train_{batch_size}.pkl"
         drug_train_paths[batch_size] = output_dir / f"drug_train_{batch_size}.pkl"
 
-    output_paths: FourSDrugOutputPaths = FourSDrugOutputPaths(
+    return FourSDrugOutputPaths(
         output_dir=output_dir,
         voc_final=output_dir / "voc_final.pkl",
         data_train=output_dir / "data_train.pkl",
@@ -422,56 +295,221 @@ def save_4sdrug_export_artifacts(
         drug_train=drug_train_paths,
     )
 
+
+def build_vocabulary_from_inputs(
+    train_input: Path,
+    dev_input: Path,
+    test_input: Path,
+) -> tuple[FourSDrugVocFile, tuple[int, int, int]]:
+    """按多份输入流式构造词表。
+
+    Args:
+        train_input: 训练集路径。
+        dev_input: 验证集路径。
+        test_input: 测试集路径。
+
+    Returns:
+        词表文件对象，以及各 split 的样本数。
+    """
+
+    symptom_values: set[str] = set()
+    diagnosis_values: set[str] = set()
+    medicine_values: set[str] = set()
+    split_counts: list[int] = []
+    input_path: Path
+    for input_path in [train_input, dev_input, test_input]:
+        sample_count: int = 0
+        source_case: FourSDrugSourceCase
+        for source_case in iter_4sdrug_source_cases(input_path):
+            update_vocab(symptom_values, source_case.symptoms)
+            update_vocab(diagnosis_values, source_case.diagnosis)
+            update_vocab(medicine_values, source_case.medicines)
+            sample_count += 1
+        split_counts.append(sample_count)
+
+    return (
+        FourSDrugVocFile(
+            sym_voc=build_vocab_file_entry(build_vocab(symptom_values)),
+            diag_voc=build_vocab_file_entry(build_vocab(diagnosis_values)),
+            med_voc=build_vocab_file_entry(build_vocab(medicine_values)),
+        ),
+        (split_counts[0], split_counts[1], split_counts[2]),
+    )
+
+
+def write_split_rows(
+    input_path: Path,
+    output_path: Path,
+    voc_final: FourSDrugVocFile,
+) -> int:
+    """写出单个 split 的编码结果。"""
+
+    def iter_indexed_rows() -> Iterator[list[list[int]]]:
+        source_case: FourSDrugSourceCase
+        for source_case in iter_4sdrug_source_cases(input_path):
+            yield indexed_case_to_row(source_case, voc_final)
+
+    return write_pickle_row_stream(output_path, iter_indexed_rows())
+
+
+def build_train_bucket_paths(
+    temp_dir: Path,
+    train_rows_path: Path,
+    sym_sets_path: Path,
+    medicine_vocab_size: int,
+) -> tuple[csr_matrix, dict[int, Path]]:
+    """从 `data_train.pkl` 流式生成训练侧衍生文件的中间桶。"""
+
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    bucket_paths: dict[int, Path] = {}
+    bucket_writers: dict[int, PickleRowStreamWriter] = {}
+    indices: list[int] = []
+    indptr: list[int] = [0]
+    row_count: int = 0
+
+    with ExitStack() as stack:
+        sym_sets_writer: PickleRowStreamWriter = open_pickle_row_stream_writer(sym_sets_path)
+        stack.callback(sym_sets_writer.file.close)
+
+        row: list[list[int]]
+        for row in iter_pickle_rows(train_rows_path):
+            symptoms: list[int] = row[0]
+            medicines: list[int] = row[2]
+            write_pickle_row(sym_sets_writer, symptoms)
+
+            symptom_count: int = len(symptoms)
+            if symptom_count not in bucket_writers:
+                bucket_path: Path = temp_dir / f"symptom_count_{symptom_count}.pkl"
+                bucket_paths[symptom_count] = bucket_path
+                bucket_writer: PickleRowStreamWriter = open_pickle_row_stream_writer(bucket_path)
+                bucket_writers[symptom_count] = bucket_writer
+                stack.callback(bucket_writer.file.close)
+            write_pickle_row(bucket_writers[symptom_count], [symptoms, medicines])
+
+            medicine_id: int
+            for medicine_id in medicines:
+                indices.append(medicine_id - 1)
+            indptr.append(len(indices))
+            row_count += 1
+
+    data: npt.NDArray[np.int8] = np.ones(len(indices), dtype=np.int8)
+    return (
+        csr_matrix(
+            (
+                data,
+                np.asarray(indices, dtype=np.int64),
+                np.asarray(indptr, dtype=np.int64),
+            ),
+            shape=(row_count, medicine_vocab_size),
+            dtype=np.int8,
+        ),
+        bucket_paths,
+    )
+
+
+def write_batched_training_files(
+    output_paths: FourSDrugOutputPaths,
+    bucket_paths: dict[int, Path],
+    batch_sizes: list[int],
+    medicine_vocab_size: int,
+) -> None:
+    """根据训练桶文件流式写出批训练缓存。"""
+
+    batch_size: int
+    for batch_size in sorted(set(batch_sizes)):
+        with ExitStack() as stack:
+            sym_writer: PickleRowStreamWriter = open_pickle_row_stream_writer(
+                output_paths.sym_train[batch_size]
+            )
+            drug_writer: PickleRowStreamWriter = open_pickle_row_stream_writer(
+                output_paths.drug_train[batch_size]
+            )
+            stack.callback(sym_writer.file.close)
+            stack.callback(drug_writer.file.close)
+
+            symptom_count: int
+            for symptom_count in sorted(bucket_paths):
+                symptom_batch: list[list[int]] = []
+                drug_batch: list[npt.NDArray[np.bool_]] = []
+                bucket_row: list[list[int]]
+                for bucket_row in iter_pickle_rows(bucket_paths[symptom_count]):
+                    symptoms: list[int] = bucket_row[0]
+                    medicines: list[int] = bucket_row[1]
+                    symptom_batch.append(symptoms)
+                    drug_batch.append(build_drug_multihot(medicines, medicine_vocab_size))
+                    if len(symptom_batch) < batch_size:
+                        continue
+                    write_pickle_row(sym_writer, symptom_batch)
+                    write_pickle_row(drug_writer, drug_batch)
+                    symptom_batch = []
+                    drug_batch = []
+
+                if symptom_batch:
+                    write_pickle_row(sym_writer, symptom_batch)
+                    write_pickle_row(drug_writer, drug_batch)
+
+
+def save_static_artifacts(
+    output_paths: FourSDrugOutputPaths,
+    voc_final: FourSDrugVocFile,
+    ddi_adj: csr_matrix,
+    drug_multihots: csr_matrix,
+) -> None:
+    """保存 4SDrug 静态导出产物。"""
+
     with output_paths.voc_final.open("wb") as file:
-        dill.dump(asdict(artifacts.voc_final), file, protocol=HIGHEST_PROTOCOL)
-    with output_paths.data_train.open("wb") as file:
-        dill.dump(artifacts.data_train, file, protocol=HIGHEST_PROTOCOL)
-    with output_paths.data_eval.open("wb") as file:
-        dill.dump(artifacts.data_eval, file, protocol=HIGHEST_PROTOCOL)
-    with output_paths.data_test.open("wb") as file:
-        dill.dump(artifacts.data_test, file, protocol=HIGHEST_PROTOCOL)
+        dill.dump(asdict(voc_final), file, protocol=HIGHEST_PROTOCOL)
     with output_paths.ddi_A_final.open("wb") as file:
-        dill.dump(artifacts.ddi_A_final, file, protocol=HIGHEST_PROTOCOL)
-    with output_paths.sym_sets.open("wb") as file:
-        dill.dump(artifacts.sym_sets, file, protocol=HIGHEST_PROTOCOL)
+        dill.dump(ddi_adj, file, protocol=HIGHEST_PROTOCOL)
     with output_paths.drug_multihots.open("wb") as file:
-        dill.dump(artifacts.drug_multihots, file, protocol=HIGHEST_PROTOCOL)
-
-    batch_data: FourSDrugBatchData
-    for batch_size, batch_data in artifacts.batch_data.items():
-        with output_paths.sym_train[batch_size].open("wb") as file:
-            dill.dump(batch_data.sym_train, file, protocol=HIGHEST_PROTOCOL)
-        with output_paths.drug_train[batch_size].open("wb") as file:
-            dill.dump(batch_data.drug_train, file, protocol=HIGHEST_PROTOCOL)
-
-    return output_paths
+        dill.dump(drug_multihots, file, protocol=HIGHEST_PROTOCOL)
 
 
 def export_dataset(config: FourSDrugExportConfig) -> FourSDrugOutputPaths:
     """执行 4SDrug 离线导出。"""
 
-    print(f"开始读取 train 数据: {config.train_input.resolve()}")
-    train_cases: FourSDrugStringCases = load_4sdrug_string_cases(config.train_input)
-    print(f"开始读取 dev 数据: {config.dev_input.resolve()}")
-    dev_cases: FourSDrugStringCases = load_4sdrug_string_cases(config.dev_input)
-    print(f"开始读取 test 数据: {config.test_input.resolve()}")
-    test_cases: FourSDrugStringCases = load_4sdrug_string_cases(config.test_input)
+    unique_batch_sizes: list[int] = sorted(set(config.batch_sizes))
+    output_paths: FourSDrugOutputPaths = build_output_paths(config.output_dir, unique_batch_sizes)
+    output_paths.output_dir.mkdir(parents=True, exist_ok=True)
+
+    print("开始流式构造 4SDrug 词表")
+    voc_final, split_counts = build_vocabulary_from_inputs(
+        config.train_input,
+        config.dev_input,
+        config.test_input,
+    )
     print(
-        "读取完成: "
-        f"train={len(train_cases.symptoms)}, "
-        f"dev={len(dev_cases.symptoms)}, "
-        f"test={len(test_cases.symptoms)}",
+        f"词表构造完成: train={split_counts[0]}, dev={split_counts[1]}, test={split_counts[2]}",
     )
-    print(f"开始构造 4SDrug 离线产物，batch_sizes={sorted(set(config.batch_sizes))}")
-    artifacts: FourSDrugExportArtifacts = build_4sdrug_export_artifacts(
-        train_cases,
-        dev_cases,
-        test_cases,
-        config.batch_sizes,
+
+    print(f"开始写出 train 编码结果: {output_paths.data_train.resolve()}")
+    write_split_rows(config.train_input, output_paths.data_train, voc_final)
+    print(f"开始写出 dev 编码结果: {output_paths.data_eval.resolve()}")
+    write_split_rows(config.dev_input, output_paths.data_eval, voc_final)
+    print(f"开始写出 test 编码结果: {output_paths.data_test.resolve()}")
+    write_split_rows(config.test_input, output_paths.data_test, voc_final)
+
+    print(f"开始构造训练侧衍生产物，batch_sizes={unique_batch_sizes}")
+    temp_dir: Path = output_paths.output_dir / ".foursdrug_export_tmp"
+    if temp_dir.exists():
+        shutil.rmtree(temp_dir)
+    # 目的：以磁盘分桶替代整表驻留内存，压低本地导出峰值。
+    drug_multihots, bucket_paths = build_train_bucket_paths(
+        temp_dir=temp_dir,
+        train_rows_path=output_paths.data_train,
+        sym_sets_path=output_paths.sym_sets,
+        medicine_vocab_size=len(voc_final.med_voc.idx2word),
     )
-    output_paths: FourSDrugOutputPaths = save_4sdrug_export_artifacts(
-        config.output_dir,
-        artifacts,
+    write_batched_training_files(
+        output_paths=output_paths,
+        bucket_paths=bucket_paths,
+        batch_sizes=unique_batch_sizes,
+        medicine_vocab_size=len(voc_final.med_voc.idx2word),
     )
+    shutil.rmtree(temp_dir)
+
+    print("开始构造空 DDI 矩阵")
+    ddi_adj: csr_matrix = build_ddi_adj(voc_final.med_voc.word2idx)
+    save_static_artifacts(output_paths, voc_final, ddi_adj, drug_multihots)
     print(f"写出完成: {output_paths.output_dir.resolve()}")
     return output_paths

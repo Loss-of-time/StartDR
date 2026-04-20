@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from scipy.sparse import csr_matrix
 from torch import Tensor
 
-from ...io import load_pickle
+from ...io import load_pickle, load_pickle_rows
 from ..experiment.progress import build_progress
 from ..experiment.runner import ExperimentAdapter, run_training_experiment
 from ..experiment.schema import ComparableMetrics, ExperimentEvalResult
@@ -82,11 +82,8 @@ def load_vocabulary(voc_path: Path) -> FourSDrugVocFile:
 def load_split_rows(split_path: Path, limit: int | None) -> list[list[list[int]]]:
     """加载单个 split 的索引病例。"""
 
-    with split_path.open("rb") as file:
-        rows: list[list[list[int]]] = cast(list[list[list[int]]], dill.load(file))
-    if limit is None:
-        return rows
-    return rows[:limit]
+    # 目的：兼容新版按行 pickle 导出，同时保持旧版整表 pickle 仍可直接读取。
+    return load_pickle_rows(split_path, limit)
 
 
 def build_similarity_indices(symptom_batches: list[list[list[int]]]) -> list[list[int]]:
@@ -135,10 +132,9 @@ def build_train_batches(
     symptom_batches: list[list[list[int]]]
     drug_batches: list[list[np.ndarray]]
     if train_limit is None and input_paths.sym_train.exists() and input_paths.drug_train.exists():
-        with input_paths.sym_train.open("rb") as file:
-            symptom_batches = cast(list[list[list[int]]], dill.load(file))
-        with input_paths.drug_train.open("rb") as file:
-            drug_batches = cast(list[list[np.ndarray]], dill.load(file))
+        # 目的：兼容新版按行 pickle batch 缓存，同时继续支持旧版整表缓存。
+        symptom_batches = load_pickle_rows(input_paths.sym_train)
+        drug_batches = load_pickle_rows(input_paths.drug_train)
     else:
         rebuilt_batches = build_batched_training_data(train_rows, batch_size, medicine_vocab_size)
         symptom_batches = rebuilt_batches.sym_train

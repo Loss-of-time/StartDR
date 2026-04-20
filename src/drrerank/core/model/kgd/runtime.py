@@ -267,8 +267,8 @@ def build_ddi_kg(
 ) -> Data:
     """构造全局 DDI 图。"""
 
+    del num_med_nodes
     return Data(
-        x=torch.arange(num_med_nodes, dtype=torch.int64, device=device).unsqueeze(1),
         edge_index=ddi_edge_index,
         edge_type=torch.zeros(
             (ddi_edge_index.size(1),),
@@ -318,6 +318,7 @@ def build_clinical_kg(
 ) -> Data:
     """构造单次临床图。"""
 
+    del num_clinical_nodes
     admission_edges = empty_edge_index(device)
     admission_edge_ids = empty_edge_ids(device)
 
@@ -486,7 +487,6 @@ def build_clinical_kg(
         )
 
     return Data(
-        x=torch.arange(num_clinical_nodes + 1, dtype=torch.int64, device=device).unsqueeze(1),
         edge_index=admission_edges,
         edge_type=admission_edge_ids,
     )
@@ -499,6 +499,7 @@ def build_medical_kg(
 ) -> Data:
     """构造单次药物图。"""
 
+    del num_med_nodes
     admission_edges = empty_edge_index(device)
     admission_edge_ids = empty_edge_ids(device)
     admission_edge_weights = empty_edge_ids(device)
@@ -543,7 +544,6 @@ def build_medical_kg(
         )
 
     return Data(
-        x=torch.arange(num_med_nodes + 1, dtype=torch.int64, device=device).unsqueeze(1),
         edge_index=admission_edges,
         edge_type=admission_edge_ids,
         edge_weights=admission_edge_weights,

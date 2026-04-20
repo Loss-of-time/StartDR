@@ -106,8 +106,7 @@ class KGDTrainSample:
 
     question_id: str
     patient_graphs: list[list[Data]]
-    label_tensor: Tensor
-    label_mask: Tensor
+    medicine_ids: list[int]
     gold_answers: list[str]
 
 
@@ -327,26 +326,17 @@ def build_dataset(
     )
 
     samples: list[KGDTrainSample] = []
-    output_dim: int = context.num_med_nodes + 1
     for sample_index, (record, patient_graphs) in enumerate(
         zip(records, ehr_graphs, strict=True),
         start=1,
     ):
         medicine_ids: list[int] = record[2]
-        label_tensor: Tensor
-        label_mask: Tensor
-        label_tensor, label_mask = build_label_tensor(
-            medicine_ids=medicine_ids,
-            output_dim=output_dim,
-            device=device,
-        )
         gold_answers: list[str] = build_gold_answers(medicine_ids, context.medicine_vocab)
         samples.append(
             KGDTrainSample(
                 question_id=str(sample_index),
                 patient_graphs=patient_graphs,
-                label_tensor=label_tensor,
-                label_mask=label_mask,
+                medicine_ids=medicine_ids,
                 gold_answers=gold_answers,
             )
         )
@@ -367,13 +357,21 @@ def compute_loss(
         标量损失。
     """
 
+    # 目的：按当前 step 即时构造标签，避免 10 万级药物空间标签在 setup 后常驻内存。
+    label_tensor: Tensor
+    label_mask: Tensor
+    label_tensor, label_mask = build_label_tensor(
+        medicine_ids=sample.medicine_ids,
+        output_dim=int(result.logits.size(1)),
+        device=result.logits.device,
+    )
     raw_loss: Tensor = F.binary_cross_entropy_with_logits(
         result.logits,
-        sample.label_tensor,
+        label_tensor,
         reduction="none",
     )
-    masked_loss: Tensor = raw_loss * sample.label_mask
-    return masked_loss.sum() / sample.label_mask.sum().clamp(min=1.0)
+    masked_loss: Tensor = raw_loss * label_mask
+    return masked_loss.sum() / label_mask.sum().clamp(min=1.0)
 
 
 def build_ranked_answers(
@@ -516,8 +514,10 @@ class KGDTrainAdapter(ExperimentAdapter[TrainConfig, KGDTrainState, KGDSnapshot]
         """构造 KGD 训练状态。"""
 
         device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        build_device: torch.device = torch.device("cpu")
         input_paths: KGDInputPaths = build_input_paths(config.input_dir)
-        context: KGDSharedContext = build_shared_context(config.input_dir, device)
+        # 目的：把离线样本图保留在 CPU，避免 setup 阶段一次性占满 GPU 显存。
+        context: KGDSharedContext = build_shared_context(config.input_dir, build_device)
         train_records: list[list[list[int]]] = load_split_records(
             input_paths.data_train,
             config.train_limit,
@@ -526,15 +526,15 @@ class KGDTrainAdapter(ExperimentAdapter[TrainConfig, KGDTrainState, KGDSnapshot]
             input_paths.data_eval,
             config.dev_limit,
         )
-        train_samples: list[KGDTrainSample] = build_dataset(train_records, context, device)
-        dev_samples: list[KGDTrainSample] = build_dataset(dev_records, context, device)
+        train_samples: list[KGDTrainSample] = build_dataset(train_records, context, build_device)
+        dev_samples: list[KGDTrainSample] = build_dataset(dev_records, context, build_device)
         test_samples: list[KGDTrainSample] = []
         if input_paths.data_test.exists():
             test_records: list[list[list[int]]] = load_split_records(
                 input_paths.data_test,
                 config.test_limit,
             )
-            test_samples = build_dataset(test_records, context, device)
+            test_samples = build_dataset(test_records, context, build_device)
         if not train_samples:
             raise ValueError("训练集为空，无法执行 KGD 训练。")
         if not dev_samples:

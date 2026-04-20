@@ -7,17 +7,22 @@ from contextlib import ExitStack
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
-from pickle import dump as pickle_dump
-from typing import BinaryIO, cast
+from typing import cast
 
 import dill
 import numpy as np
 import numpy.typing as npt
 from scipy.sparse import csr_matrix
 
-from ...io import PICKLE_ROW_STREAM_FORMAT, iter_pickle_rows, write_pickle_row_stream
+from ...io import (
+    PickleRowStreamWriter,
+    iter_pickle_rows,
+    open_pickle_row_stream_writer,
+    write_pickle_row_stream,
+)
 from .common import (
     FourSDrugBatchData,
+    FourSDrugDrugMultiHot,
     FourSDrugOutputPaths,
     FourSDrugSourceCase,
     FourSDrugVocabulary,
@@ -27,6 +32,9 @@ from .common import (
 # misc/4sdrug实现与复现指导.md
 # misc/TraceDR-main/TraceDR-model/baseline/4sdrug/utils/dataset2.py
 # misc/TraceDR-main/TraceDR-model/baseline/data_process/Drugrec_data_process.py
+
+type FourSDrugIndexedRow = list[list[int]]
+type FourSDrugBucketRow = list[list[int]]
 
 
 @dataclass(slots=True)
@@ -41,29 +49,100 @@ class FourSDrugExportConfig:
 
 
 @dataclass(slots=True)
-class PickleRowStreamWriter:
-    """按行 pickle 写盘器。"""
+class _FourSDrugBucketStreamWriter:
+    """管理训练分桶阶段的流式写盘状态。"""
 
-    file: BinaryIO
+    stack: ExitStack
+    temp_dir: Path
+    sym_sets_writer: PickleRowStreamWriter
+    bucket_paths: dict[int, Path]
+    bucket_writers: dict[int, PickleRowStreamWriter]
+
+    @classmethod
+    def create(
+        cls,
+        stack: ExitStack,
+        temp_dir: Path,
+        sym_sets_path: Path,
+    ) -> "_FourSDrugBucketStreamWriter":
+        """创建训练分桶阶段需要的多路流式写盘器。"""
+
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        return cls(
+            stack=stack,
+            temp_dir=temp_dir,
+            sym_sets_writer=stack.enter_context(open_pickle_row_stream_writer(sym_sets_path)),
+            bucket_paths={},
+            bucket_writers={},
+        )
+
+    def write_case(self, symptoms: list[int], medicines: list[int]) -> None:
+        """写入单条训练病例到症状集合流与分桶流。"""
+
+        self.sym_sets_writer.write(symptoms)
+        self._get_bucket_writer(len(symptoms)).write([symptoms, medicines])
+
+    def _get_bucket_writer(self, symptom_count: int) -> PickleRowStreamWriter:
+        if symptom_count not in self.bucket_writers:
+            bucket_path: Path = self.temp_dir / f"symptom_count_{symptom_count}.pkl"
+            self.bucket_paths[symptom_count] = bucket_path
+            self.bucket_writers[symptom_count] = self.stack.enter_context(
+                open_pickle_row_stream_writer(bucket_path),
+            )
+        return self.bucket_writers[symptom_count]
 
 
-def open_pickle_row_stream_writer(path: Path) -> PickleRowStreamWriter:
-    """打开按行 pickle 写盘器。"""
+@dataclass(slots=True)
+class _FourSDrugBatchStreamWriter:
+    """管理单个 batch size 的批训练缓存写盘。"""
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    file: BinaryIO = path.open("wb")
-    pickle_dump(
-        {"format": PICKLE_ROW_STREAM_FORMAT},
-        file,
-        protocol=HIGHEST_PROTOCOL,
-    )
-    return PickleRowStreamWriter(file=file)
+    batch_size: int
+    medicine_vocab_size: int
+    sym_writer: PickleRowStreamWriter
+    drug_writer: PickleRowStreamWriter
+    symptom_batch: list[list[int]]
+    drug_batch: list[FourSDrugDrugMultiHot]
 
+    @classmethod
+    def create(
+        cls,
+        stack: ExitStack,
+        output_paths: FourSDrugOutputPaths,
+        batch_size: int,
+        medicine_vocab_size: int,
+    ) -> "_FourSDrugBatchStreamWriter":
+        """创建单个 batch size 的批量写盘器。"""
 
-def write_pickle_row(writer: PickleRowStreamWriter, row: object) -> None:
-    """向按行 pickle 文件追加单条记录。"""
+        return cls(
+            batch_size=batch_size,
+            medicine_vocab_size=medicine_vocab_size,
+            sym_writer=stack.enter_context(
+                open_pickle_row_stream_writer(output_paths.sym_train[batch_size]),
+            ),
+            drug_writer=stack.enter_context(
+                open_pickle_row_stream_writer(output_paths.drug_train[batch_size]),
+            ),
+            symptom_batch=[],
+            drug_batch=[],
+        )
 
-    pickle_dump(row, writer.file, protocol=HIGHEST_PROTOCOL)
+    def append_case(self, symptoms: list[int], medicines: list[int]) -> None:
+        """追加单条病例，达到 batch 阈值时立即落盘。"""
+
+        self.symptom_batch.append(symptoms)
+        self.drug_batch.append(build_drug_multihot(medicines, self.medicine_vocab_size))
+        if len(self.symptom_batch) >= self.batch_size:
+            self.flush()
+
+    def flush(self) -> None:
+        """把当前缓存 batch 写入输出流。"""
+
+        if not self.symptom_batch:
+            return
+        self.sym_writer.write(self.symptom_batch)
+        self.drug_writer.write(self.drug_batch)
+        self.symptom_batch = []
+        self.drug_batch = []
 
 
 def update_vocab(unique_values: set[str], row: list[str]) -> None:
@@ -352,6 +431,14 @@ def write_split_rows(
     return write_pickle_row_stream(output_path, iter_indexed_rows())
 
 
+def iter_bucket_cases(bucket_path: Path) -> Iterator[tuple[list[int], list[int]]]:
+    """流式读取单个症状长度桶中的训练病例。"""
+
+    bucket_row: FourSDrugBucketRow
+    for bucket_row in iter_pickle_rows(bucket_path):
+        yield bucket_row[0], bucket_row[1]
+
+
 def build_train_bucket_paths(
     temp_dir: Path,
     train_rows_path: Path,
@@ -360,31 +447,25 @@ def build_train_bucket_paths(
 ) -> tuple[csr_matrix, dict[int, Path]]:
     """从 `data_train.pkl` 流式生成训练侧衍生文件的中间桶。"""
 
-    temp_dir.mkdir(parents=True, exist_ok=True)
     bucket_paths: dict[int, Path] = {}
-    bucket_writers: dict[int, PickleRowStreamWriter] = {}
     indices: list[int] = []
     indptr: list[int] = [0]
     row_count: int = 0
 
     with ExitStack() as stack:
-        sym_sets_writer: PickleRowStreamWriter = open_pickle_row_stream_writer(sym_sets_path)
-        stack.callback(sym_sets_writer.file.close)
+        # 目的：把多路桶文件的打开/关闭从导出循环里剥离，主流程只保留病例分桶语义。
+        bucket_stream_writer: _FourSDrugBucketStreamWriter = _FourSDrugBucketStreamWriter.create(
+            stack=stack,
+            temp_dir=temp_dir,
+            sym_sets_path=sym_sets_path,
+        )
+        bucket_paths = bucket_stream_writer.bucket_paths
 
-        row: list[list[int]]
+        row: FourSDrugIndexedRow
         for row in iter_pickle_rows(train_rows_path):
             symptoms: list[int] = row[0]
             medicines: list[int] = row[2]
-            write_pickle_row(sym_sets_writer, symptoms)
-
-            symptom_count: int = len(symptoms)
-            if symptom_count not in bucket_writers:
-                bucket_path: Path = temp_dir / f"symptom_count_{symptom_count}.pkl"
-                bucket_paths[symptom_count] = bucket_path
-                bucket_writer: PickleRowStreamWriter = open_pickle_row_stream_writer(bucket_path)
-                bucket_writers[symptom_count] = bucket_writer
-                stack.callback(bucket_writer.file.close)
-            write_pickle_row(bucket_writers[symptom_count], [symptoms, medicines])
+            bucket_stream_writer.write_case(symptoms, medicines)
 
             medicine_id: int
             for medicine_id in medicines:
@@ -418,35 +499,22 @@ def write_batched_training_files(
     batch_size: int
     for batch_size in sorted(set(batch_sizes)):
         with ExitStack() as stack:
-            sym_writer: PickleRowStreamWriter = open_pickle_row_stream_writer(
-                output_paths.sym_train[batch_size]
+            # 目的：把 batch 缓冲与落盘细节封装起来，避免业务循环直接操作流式 writer。
+            batch_writer: _FourSDrugBatchStreamWriter = _FourSDrugBatchStreamWriter.create(
+                stack=stack,
+                output_paths=output_paths,
+                batch_size=batch_size,
+                medicine_vocab_size=medicine_vocab_size,
             )
-            drug_writer: PickleRowStreamWriter = open_pickle_row_stream_writer(
-                output_paths.drug_train[batch_size]
-            )
-            stack.callback(sym_writer.file.close)
-            stack.callback(drug_writer.file.close)
 
             symptom_count: int
             for symptom_count in sorted(bucket_paths):
-                symptom_batch: list[list[int]] = []
-                drug_batch: list[npt.NDArray[np.bool_]] = []
-                bucket_row: list[list[int]]
-                for bucket_row in iter_pickle_rows(bucket_paths[symptom_count]):
-                    symptoms: list[int] = bucket_row[0]
-                    medicines: list[int] = bucket_row[1]
-                    symptom_batch.append(symptoms)
-                    drug_batch.append(build_drug_multihot(medicines, medicine_vocab_size))
-                    if len(symptom_batch) < batch_size:
-                        continue
-                    write_pickle_row(sym_writer, symptom_batch)
-                    write_pickle_row(drug_writer, drug_batch)
-                    symptom_batch = []
-                    drug_batch = []
-
-                if symptom_batch:
-                    write_pickle_row(sym_writer, symptom_batch)
-                    write_pickle_row(drug_writer, drug_batch)
+                symptoms: list[int]
+                medicines: list[int]
+                for symptoms, medicines in iter_bucket_cases(bucket_paths[symptom_count]):
+                    batch_writer.append_case(symptoms, medicines)
+                # 目的：保持不同症状长度之间的 batch 不混桶，复用原始 4SDrug 分桶语义。
+                batch_writer.flush()
 
 
 def save_static_artifacts(

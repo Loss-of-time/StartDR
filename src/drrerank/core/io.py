@@ -1,11 +1,47 @@
 import json
 from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL, dump, load
-from typing import cast
+from typing import BinaryIO, cast
 
 type JsonObject = dict[str, object]
 PICKLE_ROW_STREAM_FORMAT = "pickle_row_stream_v1"
+
+
+@dataclass(slots=True)
+class PickleRowStreamWriter:
+    """按行 pickle 写盘器。"""
+
+    file: BinaryIO
+
+    def write(self, row: object) -> None:
+        """向按行 pickle 文件追加单条记录。
+
+        Args:
+            row: 待写入记录。
+        """
+
+        dump(row, self.file, protocol=HIGHEST_PROTOCOL)
+
+
+@contextmanager
+def open_pickle_row_stream_writer(path: Path) -> Iterator[PickleRowStreamWriter]:
+    """打开按行 pickle 写盘器。
+
+    Args:
+        path: 目标文件路径。
+
+    Yields:
+        可持续追加记录的写盘器。
+    """
+
+    # 目的：统一流式 pickle 的协议头与文件生命周期，避免导出流程重复管理底层写盘细节。
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as file:
+        dump({"format": PICKLE_ROW_STREAM_FORMAT}, file, protocol=HIGHEST_PROTOCOL)
+        yield PickleRowStreamWriter(file=file)
 
 
 def load_jsonl[T](
@@ -108,12 +144,10 @@ def write_pickle_row_stream[T](
         实际写入的记录数。
     """
 
-    path.parent.mkdir(parents=True, exist_ok=True)
     row_count: int = 0
-    with path.open("wb") as file:
-        dump({"format": PICKLE_ROW_STREAM_FORMAT}, file, protocol=HIGHEST_PROTOCOL)
+    with open_pickle_row_stream_writer(path) as writer:
         row: T
         for row in rows:
-            dump(row, file, protocol=HIGHEST_PROTOCOL)
+            writer.write(row)
             row_count += 1
     return row_count

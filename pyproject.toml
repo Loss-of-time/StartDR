@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "StartDR"
 version = "0.1.0"
-description = "DrugRec 检索与检索后精排训练的双子项目工程。"
+description = "DrugRec 检索、精排与 RAG 实验的三子项目工程。"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
@@ -38,6 +38,11 @@ explicit = true
 [project.scripts]
 function-graph = "function_graph.analysis_cli:main"
 patient-candidates = "drretrieval.patient_candidates:main"
+rag-eval-generation = "drrag.evaluate_generation:main"
+rag-apply-rerank = "drrag.apply_rerank:main"
+rag-export-cases = "drrag.export_cases:main"
+rag-generate-siliconflow = "drrag.generate_siliconflow:main"
+rag-run-experiment = "drrag.run_experiment:main"
 retriever-eval = "drretrieval.retriever_eval:main"
 rerank-4sdrug-export = "drrerank.foursdrug_export:main"
 rerank-4sdrug-train = "drrerank.foursdrug_train:main"
@@ -45,6 +50,7 @@ rerank-gat-train = "drrerank.gat_train:main"
 rerank-import-tracedr = "drrerank.import_tracedr:main"
 rerank-kgd-export = "drrerank.kgd_export:main"
 rerank-kgd-train = "drrerank.kgd_train:main"
+rerank-tracedr-export-rank = "drrerank.tracedr_export_rank:main"
 rerank-tracedr-train = "drrerank.tracedr_train:main"
 treeify-function-graph = "function_graph.treeify_cli:main"
 
@@ -66,4 +72,4 @@ reportMissingTypeStubs = "none"
 useLibraryCodeForTypes = false
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/drretrieval", "src/drrerank", "src/function_graph"]
+packages = ["src/drretrieval", "src/drrerank", "src/drrag", "src/function_graph"]

@@ -12,11 +12,18 @@ from torch import Tensor
 from torch_geometric.data import Data
 
 from ...io import load_pickle, load_pickle_rows
+from ...schema import DrugRecMedicine
 from ..experiment.progress import build_progress
 from ..experiment.runner import ExperimentAdapter, run_training_experiment
 from ..experiment.schema import ComparableMetrics, ExperimentEvalResult
 from ..tracedr.metrics import TraceDRMetrics, aggregate_metrics, calculate_metrics
-from .common import KGDInputPaths, KGDVocabulary, KGDVocFile, sparse_matrix_to_edge_index
+from .common import (
+    KGDIndexedRow,
+    KGDInputPaths,
+    KGDVocabulary,
+    KGDVocFile,
+    sparse_matrix_to_edge_index,
+)
 from .model import KGDNet
 from .runtime import (
     build_ddi_kg,
@@ -24,7 +31,7 @@ from .runtime import (
     build_global_clinical_edges,
     build_patient_info,
 )
-from .schema import KGDForwardResult, KGDModelConfig
+from .schema import KGDCandidateMaskTensor, KGDForwardResult, KGDModelConfig
 
 type KGDSnapshot = dict[str, Tensor]
 
@@ -107,7 +114,10 @@ class KGDTrainSample:
     question_id: str
     patient_graphs: list[list[Data]]
     medicine_ids: list[int]
+    candidate_ids: list[int]
     gold_answers: list[str]
+    on_medicines: list[DrugRecMedicine]
+    candidate_drug_map: dict[str, DrugRecMedicine]
 
 
 @dataclass(slots=True)
@@ -179,7 +189,7 @@ def load_vocabulary(voc_path: Path) -> KGDVocFile:
 def load_split_records(
     split_path: Path,
     limit: int | None,
-) -> list[list[list[int]]]:
+) -> list[KGDIndexedRow]:
     """加载单个 split 的索引病例。
 
     Args:
@@ -191,7 +201,13 @@ def load_split_records(
     """
 
     # 目的：兼容旧版整表 `list` 文件与新版逐条 pickle 流，避免导出阶段先把整份 split 堆进内存。
-    return load_pickle_rows(split_path, limit)
+    records: list[object] = load_pickle_rows(split_path, limit)
+    if any(not isinstance(record, KGDIndexedRow) for record in records):
+        # 目的：旧版 split 缺少 rerank 候选上下文，直接提示重新导出，避免训练 silently 偏离新口径。
+        raise ValueError(
+            f"KGD 离线数据格式过旧: {split_path}。请先重新执行 rerank-kgd-export，再启动训练。"
+        )
+    return cast(list[KGDIndexedRow], records)
 
 
 def build_shared_context(
@@ -250,53 +266,66 @@ def build_shared_context(
 
 def build_label_tensor(
     medicine_ids: list[int],
+    candidate_ids: list[int],
     output_dim: int,
     device: torch.device,
-) -> tuple[Tensor, Tensor]:
+) -> tuple[Tensor, KGDCandidateMaskTensor]:
     """构造 KGD 多标签监督张量。
 
     Args:
         medicine_ids: 当前病人的金标药物索引。
+        candidate_ids: 当前病人的候选药物索引。
         output_dim: 模型输出维度。
         device: 目标设备。
 
     Returns:
-        标签张量与损失掩码。
+        标签张量与候选集损失掩码。
     """
 
     label_tensor: Tensor = torch.zeros((1, output_dim), dtype=torch.float32, device=device)
-    label_mask: Tensor = torch.ones((1, output_dim), dtype=torch.float32, device=device)
-    # 目的：屏蔽 0 号 padding 位，保持 1-based 药物索引语义。
-    label_mask[:, 0] = 0.0
+    candidate_mask: KGDCandidateMaskTensor = torch.zeros(
+        (1, output_dim),
+        dtype=torch.float32,
+        device=device,
+    )
+    unique_candidate_ids: list[int] = list(dict.fromkeys(candidate_ids))
+    if unique_candidate_ids:
+        # 目的：把 BCE 监督限制在候选集空间内，使 KGD 与 4SDrug 统一为 rerank 训练口径。
+        candidate_mask[0, torch.tensor(unique_candidate_ids, dtype=torch.long, device=device)] = 1.0
     for medicine_id in dict.fromkeys(medicine_ids):
         label_tensor[0, medicine_id] = 1.0
-    return label_tensor, label_mask
+    return label_tensor, candidate_mask
 
 
 def build_gold_answers(
     medicine_ids: list[int],
+    candidate_ids: list[int],
     medicine_vocab: KGDVocabulary,
 ) -> list[str]:
     """把药物索引恢复成药物编号。
 
     Args:
         medicine_ids: 当前病人的金标药物索引。
+        candidate_ids: 当前病人的候选药物索引。
         medicine_vocab: 药物词表。
 
     Returns:
-        去重后的金标药物编号列表。
+        候选集空间内去重后的金标药物编号列表。
     """
 
     gold_answers: list[str] = []
+    candidate_id_set: set[int] = set(candidate_ids)
     medicine_count: int = len(medicine_vocab.idx2word)
     for medicine_id in dict.fromkeys(medicine_ids):
+        if medicine_id not in candidate_id_set:
+            continue
         if 0 < medicine_id <= medicine_count:
             gold_answers.append(medicine_vocab.idx2word[medicine_id - 1])
     return gold_answers
 
 
 def build_dataset(
-    records: list[list[list[int]]],
+    records: list[KGDIndexedRow],
     context: KGDSharedContext,
     device: torch.device,
 ) -> list[KGDTrainSample]:
@@ -330,14 +359,23 @@ def build_dataset(
         zip(records, ehr_graphs, strict=True),
         start=1,
     ):
-        medicine_ids: list[int] = record[2]
-        gold_answers: list[str] = build_gold_answers(medicine_ids, context.medicine_vocab)
+        medicine_ids: list[int] = record.medicines
+        candidate_ids: list[int] = record.candidate_medicines
+        gold_answers: list[str] = build_gold_answers(
+            medicine_ids,
+            candidate_ids,
+            context.medicine_vocab,
+        )
         samples.append(
             KGDTrainSample(
                 question_id=str(sample_index),
                 patient_graphs=patient_graphs,
                 medicine_ids=medicine_ids,
+                candidate_ids=candidate_ids,
                 gold_answers=gold_answers,
+                # 目的：把 TraceDR 所需的 DDI 上下文透传到 KGD 评测阶段。
+                on_medicines=record.on_medicines,
+                candidate_drug_map=record.candidate_drugs,
             )
         )
     return samples
@@ -359,9 +397,10 @@ def compute_loss(
 
     # 目的：按当前 step 即时构造标签，避免 10 万级药物空间标签在 setup 后常驻内存。
     label_tensor: Tensor
-    label_mask: Tensor
-    label_tensor, label_mask = build_label_tensor(
+    candidate_mask: KGDCandidateMaskTensor
+    label_tensor, candidate_mask = build_label_tensor(
         medicine_ids=sample.medicine_ids,
+        candidate_ids=sample.candidate_ids,
         output_dim=int(result.logits.size(1)),
         device=result.logits.device,
     )
@@ -370,8 +409,8 @@ def compute_loss(
         label_tensor,
         reduction="none",
     )
-    masked_loss: Tensor = raw_loss * label_mask
-    return masked_loss.sum() / label_mask.sum().clamp(min=1.0)
+    masked_loss: Tensor = raw_loss * candidate_mask
+    return masked_loss.sum() / candidate_mask.sum().clamp(min=1.0)
 
 
 def build_ranked_answers(
@@ -390,16 +429,25 @@ def build_ranked_answers(
         排序后的候选药物列表。
     """
 
-    del sample
     medicine_count: int = len(medicine_vocab.idx2word)
     final_scores: Tensor = result.probabilities[-1].detach().cpu()
-    sorted_indices_tensor: Tensor = torch.argsort(final_scores, descending=True)
-    sorted_indices: list[int] = [int(index) for index in sorted_indices_tensor]
+    candidate_indices: list[int] = [
+        medicine_id
+        for medicine_id in dict.fromkeys(sample.candidate_ids)
+        if 0 < medicine_id <= medicine_count
+    ]
+    if not candidate_indices:
+        return []
+    candidate_index_tensor: Tensor = torch.tensor(candidate_indices, dtype=torch.long)
+    sorted_offsets_tensor: Tensor = torch.argsort(
+        final_scores[candidate_index_tensor],
+        descending=True,
+    )
     ranked_answers: list[RankedAnswer] = []
 
-    for medicine_index in sorted_indices:
-        if medicine_index == 0 or medicine_index > medicine_count:
-            continue
+    sorted_offset: Tensor
+    for sorted_offset in sorted_offsets_tensor:
+        medicine_index: int = candidate_indices[int(sorted_offset.item())]
         drug_id: str = medicine_vocab.idx2word[medicine_index - 1]
         ranked_answers.append(
             RankedAnswer(
@@ -451,8 +499,8 @@ def evaluate_model(
                     answers=ranked_answers,
                     gold_answers=sample.gold_answers,
                     k=5,
-                    ddi_adj=ddi_adj,
-                    drugid_to_index=medicine_vocab.word2idx,
+                    candidate_drug_map=sample.candidate_drug_map,
+                    on_medicines=sample.on_medicines,
                 )
                 losses.append(loss)
                 metrics_list.append(metrics)
@@ -518,11 +566,11 @@ class KGDTrainAdapter(ExperimentAdapter[TrainConfig, KGDTrainState, KGDSnapshot]
         input_paths: KGDInputPaths = build_input_paths(config.input_dir)
         # 目的：把离线样本图保留在 CPU，避免 setup 阶段一次性占满 GPU 显存。
         context: KGDSharedContext = build_shared_context(config.input_dir, build_device)
-        train_records: list[list[list[int]]] = load_split_records(
+        train_records: list[KGDIndexedRow] = load_split_records(
             input_paths.data_train,
             config.train_limit,
         )
-        dev_records: list[list[list[int]]] = load_split_records(
+        dev_records: list[KGDIndexedRow] = load_split_records(
             input_paths.data_eval,
             config.dev_limit,
         )
@@ -530,7 +578,7 @@ class KGDTrainAdapter(ExperimentAdapter[TrainConfig, KGDTrainState, KGDSnapshot]
         dev_samples: list[KGDTrainSample] = build_dataset(dev_records, context, build_device)
         test_samples: list[KGDTrainSample] = []
         if input_paths.data_test.exists():
-            test_records: list[list[list[int]]] = load_split_records(
+            test_records: list[KGDIndexedRow] = load_split_records(
                 input_paths.data_test,
                 config.test_limit,
             )

@@ -13,7 +13,9 @@ import numpy as np
 from scipy.sparse import csr_matrix
 
 from ...io import write_pickle_row_stream
+from ...schema import TraceDRSample, structure
 from .common import (
+    KGDIndexedRow,
     KGDOutputPaths,
     KGDSourceCase,
     KGDVocabulary,
@@ -62,14 +64,15 @@ def parse_kgd_source_case(row: dict[str, object]) -> KGDSourceCase:
         KGD 导出所需的最小病例对象。
     """
 
-    people = cast(dict[str, object], row["people"])
-    raw_medicines = cast(list[dict[str, object]], people["medicine"])
+    sample: TraceDRSample = structure(row, TraceDRSample)
     return KGDSourceCase(
-        symptoms=list(dict.fromkeys(cast(list[str], people["symptom"]))),
-        diagnosis=list(dict.fromkeys(cast(list[str], people["diagnosis"]))),
-        medicines=list(
-            dict.fromkeys(str(raw_medicine["drugid"]) for raw_medicine in raw_medicines)
-        ),
+        symptoms=list(dict.fromkeys(sample.people.symptom)),
+        diagnosis=list(dict.fromkeys(sample.people.diagnosis)),
+        medicines=list(dict.fromkeys(medicine.drugid for medicine in sample.people.medicine)),
+        candidate_medicines=list(dict.fromkeys(sample.top_k_drugs)),
+        # 目的：保留当前在用药与候选药明细，供 KGD 评测复用 TraceDR 的 DDI 统计逻辑。
+        on_medicines=sample.people.on_medicine,
+        candidate_drugs=sample.top_k_drugs,
     )
 
 
@@ -121,7 +124,10 @@ def build_vocab_file_entry(vocab: dict[str, int]) -> KGDVocabulary:
     return KGDVocabulary(word2idx=vocab, idx2word=idx2word)
 
 
-def indexed_case_to_row(source_case: KGDSourceCase, voc_final: KGDVocFile) -> list[list[int]]:
+def indexed_case_to_row(
+    source_case: KGDSourceCase,
+    voc_final: KGDVocFile,
+) -> KGDIndexedRow:
     """把单条病例编码成 KGD 原始 `pkl` 行结构。
 
     Args:
@@ -129,14 +135,20 @@ def indexed_case_to_row(source_case: KGDSourceCase, voc_final: KGDVocFile) -> li
         voc_final: 已构造完成的词表文件对象。
 
     Returns:
-        `[symptoms, diagnosis, medicines]` 形式的编码样本。
+        KGD 训练与评测共用的索引化病例。
     """
 
-    return [
-        index_row(source_case.symptoms, voc_final.sym_voc.word2idx),
-        index_row(source_case.diagnosis, voc_final.diag_voc.word2idx),
-        index_row(source_case.medicines, voc_final.med_voc.word2idx),
-    ]
+    return KGDIndexedRow(
+        symptoms=index_row(source_case.symptoms, voc_final.sym_voc.word2idx),
+        diagnosis=index_row(source_case.diagnosis, voc_final.diag_voc.word2idx),
+        medicines=index_row(source_case.medicines, voc_final.med_voc.word2idx),
+        candidate_medicines=index_row(
+            source_case.candidate_medicines,
+            voc_final.med_voc.word2idx,
+        ),
+        on_medicines=source_case.on_medicines,
+        candidate_drugs=source_case.candidate_drugs,
+    )
 
 
 def build_output_paths(output_dir: Path) -> KGDOutputPaths:
@@ -181,7 +193,7 @@ def build_bipartite_adj(
 
 
 def update_edge_sets(
-    row: list[list[int]],
+    row: KGDIndexedRow,
     diag_upper_edges: set[tuple[int, int]],
     symptom_upper_edges: set[tuple[int, int]],
     diag_symptom_edges: set[tuple[int, int]],
@@ -195,8 +207,8 @@ def update_edge_sets(
         diag_symptom_edges: 诊断-症状二部边集合。
     """
 
-    symptoms: list[int] = row[0]
-    diagnosis: list[int] = row[1]
+    symptoms: list[int] = row.symptoms
+    diagnosis: list[int] = row.diagnosis
 
     diagnosis_count: int = len(diagnosis)
     left_index: int
@@ -302,6 +314,7 @@ def build_vocabulary_from_inputs(
             update_vocab(symptom_vocab, source_case.symptoms)
             update_vocab(diagnosis_vocab, source_case.diagnosis)
             update_vocab(medicine_vocab, source_case.medicines)
+            update_vocab(medicine_vocab, source_case.candidate_medicines)
             sample_count += 1
         split_counts.append(sample_count)
 
@@ -337,10 +350,10 @@ def write_split_rows_and_collect_edges(
         当前 split 的样本数。
     """
 
-    def iter_indexed_rows() -> Iterator[list[list[int]]]:
+    def iter_indexed_rows() -> Iterator[KGDIndexedRow]:
         source_case: KGDSourceCase
         for source_case in iter_kgd_source_cases(input_path):
-            indexed_row: list[list[int]] = indexed_case_to_row(source_case, voc_final)
+            indexed_row: KGDIndexedRow = indexed_case_to_row(source_case, voc_final)
             update_edge_sets(
                 indexed_row,
                 diag_upper_edges,

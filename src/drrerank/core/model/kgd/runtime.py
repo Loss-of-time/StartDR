@@ -13,6 +13,7 @@ from ...io import load_pickle, load_pickle_rows
 from .common import (
     KGDAdmissionInfo,
     KGDEHRGraphs,
+    KGDIndexedRow,
     KGDInputPaths,
     KGDPatientInfo,
     KGDRelationKey,
@@ -96,9 +97,20 @@ def load_kgd_runtime_artifacts(input_dir: Path) -> KGDRuntimeArtifacts:
     )
     with input_paths.voc_final.open("rb") as file:
         raw_voc = cast(dict[str, object], dill.load(file))
-    data_train: list[list[list[int]]] = load_pickle_rows(input_paths.data_train)
-    data_test: list[list[list[int]]] = load_pickle_rows(input_paths.data_test)
-    data_eval: list[list[list[int]]] = load_pickle_rows(input_paths.data_eval)
+    data_train_raw: list[object] = load_pickle_rows(input_paths.data_train)
+    data_test_raw: list[object] = load_pickle_rows(input_paths.data_test)
+    data_eval_raw: list[object] = load_pickle_rows(input_paths.data_eval)
+    if any(
+        not isinstance(record, KGDIndexedRow)
+        for record in data_train_raw + data_test_raw + data_eval_raw
+    ):
+        # 目的：运行时构图依赖新版候选上下文，旧版 pkl 直接报错，避免后续 AttributeError 掩盖真实原因。
+        raise ValueError(
+            f"KGD 离线数据格式过旧: {input_dir}。请先重新执行 rerank-kgd-export，再执行当前命令。"
+        )
+    data_train: list[KGDIndexedRow] = cast(list[KGDIndexedRow], data_train_raw)
+    data_test: list[KGDIndexedRow] = cast(list[KGDIndexedRow], data_test_raw)
+    data_eval: list[KGDIndexedRow] = cast(list[KGDIndexedRow], data_eval_raw)
     return KGDRuntimeArtifacts(
         ehr_records=data_train + data_test + data_eval,
         diag_adj=cast(csr_matrix, load_pickle(input_paths.diag_adj)),
@@ -195,7 +207,7 @@ def build_global_clinical_edges(
 
 
 def build_patient_info(
-    ehr_records: list[list[list[int]]],
+    ehr_records: list[KGDIndexedRow],
     num_clinical_nodes: int,
     num_med_nodes: int,
     device: torch.device,
@@ -203,12 +215,13 @@ def build_patient_info(
     """构造 patient_info。"""
 
     patient_info: KGDPatientInfo = []
+    subject: KGDIndexedRow
     for subject in ehr_records:
         admission_info: list[KGDAdmissionInfo] = []
         for admission in [subject]:
-            diagnoses = admission[1]
-            procedures = admission[0]
-            medicines = admission[2]
+            diagnoses = admission.diagnosis
+            procedures = admission.symptoms
+            medicines = admission.medicines
             admission_info.append(
                 {
                     ("patient", "prescribed_to", "medicine"): build_patient_relation(

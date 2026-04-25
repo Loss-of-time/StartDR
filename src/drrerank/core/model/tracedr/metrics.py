@@ -35,6 +35,8 @@ def _get_ranked_answer_ids(
     answers: Sequence[RankedAnswerLike],
     top_k: int | None = None,
 ) -> list[str]:
+    """提取排序结果中的药物编号。"""
+
     if top_k is None:
         return [answer.id for answer in answers]
     return [answer.id for answer in answers[:top_k]]
@@ -44,6 +46,8 @@ def _get_hit(
     gold_answer_ids: set[str],
     ranked_answer_ids: Sequence[str],
 ) -> float:
+    """计算命中率。"""
+
     return 1.0 if gold_answer_ids.intersection(ranked_answer_ids) else 0.0
 
 
@@ -51,6 +55,8 @@ def _get_mrr(
     gold_answer_ids: set[str],
     ranked_answer_ids: Sequence[str],
 ) -> float:
+    """计算单样本 MRR。"""
+
     index: int
     answer_id: str
     for index, answer_id in enumerate(ranked_answer_ids, start=1):
@@ -63,6 +69,8 @@ def _get_precision_at_k(
     gold_answer_ids: set[str],
     ranked_answer_ids: Sequence[str],
 ) -> float:
+    """计算 Precision@K。"""
+
     if not ranked_answer_ids:
         return 0.0
     hit_count: int = len(gold_answer_ids.intersection(ranked_answer_ids))
@@ -73,6 +81,8 @@ def _get_recall_at_k(
     gold_answer_ids: set[str],
     ranked_answer_ids: Sequence[str],
 ) -> float:
+    """计算 Recall@K。"""
+
     if not gold_answer_ids:
         return 0.0
     hit_count: int = len(gold_answer_ids.intersection(ranked_answer_ids))
@@ -83,6 +93,8 @@ def _get_f1(
     precision: float,
     recall: float,
 ) -> float:
+    """计算 F1。"""
+
     if precision + recall == 0.0:
         return 0.0
     return 2 * precision * recall / (precision + recall)
@@ -92,6 +104,8 @@ def _get_jaccard_similarity_at_k(
     gold_answer_ids: set[str],
     ranked_answer_ids: Sequence[str],
 ) -> float:
+    """计算 top-k Jaccard 相似度。"""
+
     ranked_answer_id_set: set[str] = set(ranked_answer_ids)
     union: set[str] = gold_answer_ids.union(ranked_answer_id_set)
     if not union:
@@ -103,6 +117,8 @@ def _get_jaccard_similarity_at_k(
 def _build_interaction_name_set(
     on_medicines: Sequence[DrugRecMedicine],
 ) -> set[str]:
+    """收集当前在用药的相互作用名称集合。"""
+
     interaction_names: set[str] = set()
     medicine: DrugRecMedicine
     for medicine in on_medicines:
@@ -119,6 +135,8 @@ def _get_interaction_based_ddi_rate(
     on_medicines: Sequence[DrugRecMedicine],
     k: int,
 ) -> float:
+    """按 TraceDR 参考实现计算推荐药与当前在用药之间的 DDI。"""
+
     if k <= 0 or not on_medicines:
         return 0.0
 
@@ -142,11 +160,29 @@ def _get_interaction_based_ddi_rate(
     return interaction_count / k
 
 
+def calculate_interaction_ddi_rate(
+    predicted_answer_ids: Sequence[str],
+    candidate_drug_map: Mapping[str, DrugRecMedicine],
+    on_medicines: Sequence[DrugRecMedicine],
+    k: int,
+) -> float:
+    """公开暴露 TraceDR 的 interaction-based DDI 口径。"""
+
+    return _get_interaction_based_ddi_rate(
+        predicted_answer_ids=predicted_answer_ids,
+        candidate_drug_map=candidate_drug_map,
+        on_medicines=on_medicines,
+        k=k,
+    )
+
+
 def _get_pairwise_ddi_rate(
     predicted_answer_ids: Sequence[str],
     ddi_adj: csr_matrix,
     drugid_to_index: Mapping[str, int],
 ) -> float:
+    """按两两药物对计算 DDI。"""
+
     unique_answer_ids: list[str] = list(dict.fromkeys(predicted_answer_ids))
     predicted_indices: list[int] = [
         drugid_to_index[answer_id]
@@ -179,6 +215,8 @@ def _get_ddi_rate(
     ddi_adj: csr_matrix | None = None,
     drugid_to_index: Mapping[str, int] | None = None,
 ) -> float:
+    """按可用上下文选择 DDI 统计口径。"""
+
     if candidate_drug_map is not None and on_medicines is not None:
         return _get_interaction_based_ddi_rate(
             predicted_answer_ids=predicted_answer_ids,

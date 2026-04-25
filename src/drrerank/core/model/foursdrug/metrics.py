@@ -1,11 +1,14 @@
 """4SDrug 指标计算。"""
 
+from collections.abc import Mapping
 from dataclasses import fields
 
 import numpy as np
 import numpy.typing as npt
 from scipy.sparse import csr_matrix
 
+from ...schema import DrugRecMedicine
+from ..tracedr.metrics import calculate_interaction_ddi_rate
 from .schema import FourSDrugMetrics
 
 type FourSDrugRankedIds = npt.NDArray[np.int64]
@@ -94,12 +97,32 @@ def _get_ddi_rate(
     return interaction_count / pair_count if pair_count else 0.0
 
 
+def _build_candidate_drugid_map(
+    candidate_drug_ids: FourSDrugCandidateIds | None,
+    candidate_drug_map: Mapping[str, DrugRecMedicine] | None,
+) -> dict[int, str]:
+    """构造 1-based 候选药索引到药物编号的映射。"""
+
+    if candidate_drug_ids is None or candidate_drug_map is None:
+        return {}
+    return {
+        candidate_id: drug_id
+        for drug_id, candidate_id in zip(
+            candidate_drug_map.keys(),
+            candidate_drug_ids,
+            strict=False,
+        )
+    }
+
+
 def calculate_metrics(
     probabilities: FourSDrugProbabilityArray,
     gold_drug_ids: list[int],
     candidate_drug_ids: FourSDrugCandidateIds | None,
     ddi_adj: csr_matrix,
     threshold: float,
+    candidate_drug_map: Mapping[str, DrugRecMedicine] | None = None,
+    on_medicines: list[DrugRecMedicine] | None = None,
     loss: float = 0.0,
 ) -> FourSDrugMetrics:
     """计算单样本 4SDrug 指标。
@@ -110,6 +133,8 @@ def calculate_metrics(
         candidate_drug_ids: 当前样本允许排序与预测的候选药物 id。
         ddi_adj: 1-based DDI 邻接矩阵。
         threshold: 多标签预测阈值。
+        candidate_drug_map: 当前样本候选药明细，存在时优先按 TraceDR 口径计算 DDI。
+        on_medicines: 当前在用药明细。
         loss: 样本损失。
 
     Returns:
@@ -129,6 +154,13 @@ def calculate_metrics(
     top_1_ids: set[int] = {int(ranked_drug_ids[0])} if ranked_drug_ids.size else set()
     top_5_ids: list[int] = [int(drug_id) for drug_id in ranked_drug_ids[:5]]
     top_5_set: set[int] = set(top_5_ids)
+    candidate_drugid_map: dict[int, str] = _build_candidate_drugid_map(
+        candidate_drug_ids,
+        candidate_drug_map,
+    )
+    top_5_drugids: list[str] = [
+        candidate_drugid_map[drug_id] for drug_id in top_5_ids if drug_id in candidate_drugid_map
+    ]
 
     intersection_count: int = len(gold_set.intersection(predicted_set))
     union_count: int = len(gold_set.union(predicted_set))
@@ -161,7 +193,16 @@ def calculate_metrics(
         recall=recall,
         f1=f1,
         avg_drugs=float(len(predicted_drug_ids)),
-        ddi_rate=_get_ddi_rate(predicted_drug_ids, ddi_adj),
+        ddi_rate=(
+            calculate_interaction_ddi_rate(
+                predicted_answer_ids=top_5_drugids,
+                candidate_drug_map=candidate_drug_map,
+                on_medicines=on_medicines,
+                k=5,
+            )
+            if candidate_drug_map is not None and on_medicines is not None
+            else _get_ddi_rate(predicted_drug_ids, ddi_adj)
+        ),
         p_at_1=1.0 if gold_set.intersection(top_1_ids) else 0.0,
         mrr=mrr,
         hit_at_5=1.0 if top_5_hit_count > 0 else 0.0,

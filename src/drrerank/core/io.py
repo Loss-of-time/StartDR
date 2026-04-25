@@ -80,17 +80,21 @@ def load_pickle(path: Path) -> object:
 
 def iter_pickle_rows[T](
     path: Path,
+    row_type: type[T] | None = None,
 ) -> Iterator[T]:
     """流式读取按行 pickle 的记录文件，兼容旧版整表 `list` 格式。
 
     Args:
         path: 待读取文件路径。
+        row_type: 用于保留泛型信息的占位参数。
 
     Yields:
         记录流中的单条记录。
     """
 
     with path.open("rb") as file:
+        # 目的：显式保留调用处声明的记录类型，避免静态检查把返回值退化成 object。
+        _ = row_type
         first_object: object = load(file)
         if (
             isinstance(first_object, dict)
@@ -110,12 +114,14 @@ def iter_pickle_rows[T](
 def load_pickle_rows[T](
     path: Path,
     limit: int | None = None,
+    row_type: type[T] | None = None,
 ) -> list[T]:
     """读取按行 pickle 的记录文件，兼容旧版整表 `list` 格式。
 
     Args:
         path: 待读取文件路径。
         limit: 最多读取的记录数。
+        row_type: 用于保留泛型信息的占位参数。
 
     Returns:
         记录列表。
@@ -123,7 +129,7 @@ def load_pickle_rows[T](
 
     rows: list[T] = []
     row: T
-    for row in iter_pickle_rows(path):
+    for row in iter_pickle_rows(path, row_type=row_type):
         rows.append(row)
         if limit is not None and len(rows) >= limit:
             break

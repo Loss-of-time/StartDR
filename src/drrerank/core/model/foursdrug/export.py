@@ -20,9 +20,11 @@ from ...io import (
     open_pickle_row_stream_writer,
     write_pickle_row_stream,
 )
+from ...schema import TraceDRSample, structure
 from .common import (
     FourSDrugBatchData,
     FourSDrugDrugMultiHot,
+    FourSDrugIndexedRow,
     FourSDrugOutputPaths,
     FourSDrugSourceCase,
     FourSDrugVocabulary,
@@ -33,7 +35,6 @@ from .common import (
 # misc/TraceDR-main/TraceDR-model/baseline/4sdrug/utils/dataset2.py
 # misc/TraceDR-main/TraceDR-model/baseline/data_process/Drugrec_data_process.py
 
-type FourSDrugIndexedRow = list[list[int]]
 type FourSDrugBucketRow = list[list[int]]
 
 
@@ -185,16 +186,15 @@ def parse_4sdrug_source_case(row: dict[str, object]) -> FourSDrugSourceCase:
         4SDrug 导出所需的最小病例对象。
     """
 
-    people: dict[str, object] = cast(dict[str, object], row["people"])
-    raw_medicines: list[dict[str, object]] = cast(list[dict[str, object]], people["medicine"])
-    raw_top_k_drugs: dict[str, object] = cast(dict[str, object], row["top_k_drugs"])
+    sample: TraceDRSample = structure(row, TraceDRSample)
     return FourSDrugSourceCase(
-        symptoms=list(dict.fromkeys(cast(list[str], people["symptom"]))),
-        diagnosis=list(dict.fromkeys(cast(list[str], people["diagnosis"]))),
-        medicines=list(
-            dict.fromkeys(str(raw_medicine["drugid"]) for raw_medicine in raw_medicines)
-        ),
-        candidate_medicines=list(dict.fromkeys(str(drug_id) for drug_id in raw_top_k_drugs)),
+        symptoms=list(dict.fromkeys(sample.people.symptom)),
+        diagnosis=list(dict.fromkeys(sample.people.diagnosis)),
+        medicines=list(dict.fromkeys(medicine.drugid for medicine in sample.people.medicine)),
+        candidate_medicines=list(dict.fromkeys(sample.top_k_drugs)),
+        # 目的：保留当前在用药与候选药明细，供 4SDrug 评测复用 TraceDR 的 DDI 口径。
+        on_medicines=sample.people.on_medicine,
+        candidate_drugs=sample.top_k_drugs,
     )
 
 
@@ -271,7 +271,7 @@ def build_vocab_file_entry(vocabulary: dict[str, int]) -> FourSDrugVocabulary:
 def indexed_case_to_row(
     source_case: FourSDrugSourceCase,
     voc_final: FourSDrugVocFile,
-) -> list[list[int]]:
+) -> FourSDrugIndexedRow:
     """把单条病例编码成 4SDrug 原始 `pkl` 行结构。
 
     Args:
@@ -279,15 +279,20 @@ def indexed_case_to_row(
         voc_final: 已构造完成的词表文件对象。
 
     Returns:
-        `[symptoms, diagnosis, medicines, candidate_medicines]` 形式的编码样本。
+        4SDrug 训练与评测共用的索引化样本。
     """
 
-    return [
-        index_row(source_case.symptoms, voc_final.sym_voc.word2idx),
-        index_row(source_case.diagnosis, voc_final.diag_voc.word2idx),
-        index_row(source_case.medicines, voc_final.med_voc.word2idx),
-        index_row(source_case.candidate_medicines, voc_final.med_voc.word2idx),
-    ]
+    return FourSDrugIndexedRow(
+        symptoms=index_row(source_case.symptoms, voc_final.sym_voc.word2idx),
+        diagnosis=index_row(source_case.diagnosis, voc_final.diag_voc.word2idx),
+        medicines=index_row(source_case.medicines, voc_final.med_voc.word2idx),
+        candidate_medicines=index_row(
+            source_case.candidate_medicines,
+            voc_final.med_voc.word2idx,
+        ),
+        on_medicines=source_case.on_medicines,
+        candidate_drugs=source_case.candidate_drugs,
+    )
 
 
 def build_ddi_adj(medicine_vocab: dict[str, int]) -> csr_matrix:
@@ -318,14 +323,14 @@ def build_drug_multihot(
 
 
 def build_batched_training_data(
-    train_rows: list[list[list[int]]],
+    train_rows: list[FourSDrugIndexedRow],
     batch_size: int,
     medicine_vocab_size: int,
 ) -> FourSDrugBatchData:
     """按症状长度分桶并切分训练 batch。
 
     Args:
-        train_rows: `data_train.pkl` 行结构。
+        train_rows: `data_train.pkl` 的索引化病例列表。
         batch_size: 导出的 batch size。
         medicine_vocab_size: 药物词表大小，不含 0 占位。
 
@@ -336,7 +341,7 @@ def build_batched_training_data(
     sym_groups: dict[int, list[list[int]]] = {}
     drug_groups: dict[int, list[npt.NDArray[np.bool_]]] = {}
     candidate_groups: dict[int, list[list[int]]] = {}
-    row: list[list[int]]
+    row: FourSDrugIndexedRow
     symptoms: list[int]
     medicines: list[int]
     candidate_medicines: list[int]
@@ -344,9 +349,9 @@ def build_batched_training_data(
     drug_multihot: npt.NDArray[np.bool_]
 
     for row in train_rows:
-        symptoms = row[0]
-        medicines = row[2]
-        candidate_medicines = row[3]
+        symptoms = row.symptoms
+        medicines = row.medicines
+        candidate_medicines = row.candidate_medicines
         symptom_count = len(symptoms)
         if symptom_count not in sym_groups:
             sym_groups[symptom_count] = []
@@ -460,7 +465,7 @@ def write_split_rows(
 ) -> int:
     """写出单个 split 的编码结果。"""
 
-    def iter_indexed_rows() -> Iterator[list[list[int]]]:
+    def iter_indexed_rows() -> Iterator[FourSDrugIndexedRow]:
         source_case: FourSDrugSourceCase
         for source_case in iter_4sdrug_source_cases(input_path):
             yield indexed_case_to_row(source_case, voc_final)
@@ -500,9 +505,9 @@ def build_train_bucket_paths(
 
         row: FourSDrugIndexedRow
         for row in iter_pickle_rows(train_rows_path):
-            symptoms: list[int] = row[0]
-            medicines: list[int] = row[2]
-            candidate_medicines: list[int] = row[3]
+            symptoms: list[int] = row.symptoms
+            medicines: list[int] = row.medicines
+            candidate_medicines: list[int] = row.candidate_medicines
             bucket_stream_writer.write_case(symptoms, medicines, candidate_medicines)
 
             medicine_id: int

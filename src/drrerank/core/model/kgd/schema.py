@@ -7,6 +7,7 @@ from torch import Tensor
 
 type AdmissionLogits = Float[Tensor, "admission medicine"]
 type AdmissionEmbeddings = Float[Tensor, "admission hidden"]
+type KGDCandidateMaskTensor = Float[Tensor, "admission medicine"]
 
 
 @dataclass(slots=True)

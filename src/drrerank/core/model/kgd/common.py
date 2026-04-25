@@ -8,10 +8,13 @@ import torch
 from scipy.sparse import csr_matrix
 from torch_geometric.data import Data
 
+from ...schema import DrugRecMedicine
+
 
 @dataclass(slots=True)
 class KGDIndexedCases:
     """索引化后的病例集合。"""
+
     symptoms: list[list[int]]
     diagnosis: list[list[int]]
     medicines: list[list[int]]
@@ -20,6 +23,7 @@ class KGDIndexedCases:
 @dataclass(slots=True)
 class KGDStringCases:
     """原始字符串病例集合。"""
+
     symptoms: list[list[str]]
     diagnosis: list[list[str]]
     medicines: list[list[str]]
@@ -28,14 +32,31 @@ class KGDStringCases:
 @dataclass(slots=True)
 class KGDSourceCase:
     """从单条 TraceDR 样本抽取出的病例字段。"""
+
     symptoms: list[str]
     diagnosis: list[str]
     medicines: list[str]
+    candidate_medicines: list[str]
+    on_medicines: list[DrugRecMedicine]
+    candidate_drugs: dict[str, DrugRecMedicine]
+
+
+@dataclass(slots=True)
+class KGDIndexedRow:
+    """KGD 单条索引病例。"""
+
+    symptoms: list[int]
+    diagnosis: list[int]
+    medicines: list[int]
+    candidate_medicines: list[int]
+    on_medicines: list[DrugRecMedicine]
+    candidate_drugs: dict[str, DrugRecMedicine]
 
 
 @dataclass(slots=True)
 class KGDVocabulary:
     """KGD 词表对象。"""
+
     word2idx: dict[str, int]
     idx2word: list[str]
 
@@ -43,6 +64,7 @@ class KGDVocabulary:
 @dataclass(slots=True)
 class KGDVocFile:
     """KGD 词表文件结构。"""
+
     sym_voc: KGDVocabulary
     diag_voc: KGDVocabulary
     med_voc: KGDVocabulary
@@ -51,10 +73,11 @@ class KGDVocFile:
 @dataclass(slots=True)
 class KGDExportArtifacts:
     """离线导出阶段写盘前的全部产物。"""
+
     voc_final: KGDVocFile
-    data_train: list[list[list[int]]]
-    data_eval: list[list[list[int]]]
-    data_test: list[list[list[int]]]
+    data_train: list[KGDIndexedRow]
+    data_eval: list[KGDIndexedRow]
+    data_test: list[KGDIndexedRow]
     diag_adj: csr_matrix
     proc_adj: csr_matrix
     diag_proc_adj: csr_matrix
@@ -66,6 +89,7 @@ class KGDExportArtifacts:
 @dataclass(slots=True)
 class KGDOutputPaths:
     """离线导出输出路径集合。"""
+
     output_dir: Path
     voc_final: Path
     data_train: Path
@@ -82,6 +106,7 @@ class KGDOutputPaths:
 @dataclass(slots=True)
 class KGDInputPaths:
     """运行时构图输入路径集合。"""
+
     input_dir: Path
     voc_final: Path
     data_train: Path
@@ -98,7 +123,8 @@ class KGDInputPaths:
 @dataclass(slots=True)
 class KGDRuntimeArtifacts:
     """运行时构图阶段加载后的全部产物。"""
-    ehr_records: list[list[list[int]]]
+
+    ehr_records: list[KGDIndexedRow]
     diag_adj: csr_matrix
     proc_adj: csr_matrix
     diag_proc_adj: csr_matrix

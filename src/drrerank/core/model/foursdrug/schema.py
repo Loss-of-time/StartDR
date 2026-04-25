@@ -7,13 +7,14 @@ from jaxtyping import Bool, Float, Int
 from scipy.sparse import csr_matrix
 from torch import Tensor
 
+from .common import FourSDrugIndexedRow
+
 type FourSDrugLogits = Float[Tensor, "batch medicine"]
 type FourSDrugProbabilities = Float[Tensor, "batch medicine"]
 type FourSDrugSymptomTensor = Int[Tensor, "batch symptom"]
 type FourSDrugDrugTensor = Float[Tensor, "batch medicine"]
 type FourSDrugCandidateMaskTensor = Bool[Tensor, "batch medicine"]
 type FourSDrugSimilarIndexTensor = Int[Tensor, "batch"]
-type FourSDrugIndexedRow = list[list[int]]
 
 
 @dataclass(slots=True)

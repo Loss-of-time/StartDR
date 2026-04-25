@@ -7,6 +7,8 @@ import numpy as np
 import numpy.typing as npt
 from scipy.sparse import csr_matrix
 
+from ...schema import DrugRecMedicine
+
 type FourSDrugUpperEdge = tuple[int, int]
 type FourSDrugDrugMultiHot = npt.NDArray[np.bool_]
 
@@ -19,6 +21,20 @@ class FourSDrugSourceCase:
     diagnosis: list[str]
     medicines: list[str]
     candidate_medicines: list[str]
+    on_medicines: list[DrugRecMedicine]
+    candidate_drugs: dict[str, DrugRecMedicine]
+
+
+@dataclass(slots=True)
+class FourSDrugIndexedRow:
+    """4SDrug 单条索引病例。"""
+
+    symptoms: list[int]
+    diagnosis: list[int]
+    medicines: list[int]
+    candidate_medicines: list[int]
+    on_medicines: list[DrugRecMedicine]
+    candidate_drugs: dict[str, DrugRecMedicine]
 
 
 @dataclass(slots=True)
@@ -70,9 +86,9 @@ class FourSDrugExportArtifacts:
     """4SDrug 离线导出阶段写盘前的全部产物。"""
 
     voc_final: FourSDrugVocFile
-    data_train: list[list[list[int]]]
-    data_eval: list[list[list[int]]]
-    data_test: list[list[list[int]]]
+    data_train: list[FourSDrugIndexedRow]
+    data_eval: list[FourSDrugIndexedRow]
+    data_test: list[FourSDrugIndexedRow]
     ddi_A_final: csr_matrix
     sym_sets: list[list[int]]
     drug_multihots: csr_matrix

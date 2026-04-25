@@ -79,6 +79,8 @@ class CandidateDrug:
 
 @dataclass(slots=True)
 class RankedDrug:
+    """精排后的候选药物记录。"""
+
     drugid: str
     score: float
     rank: int
@@ -90,11 +92,22 @@ class RankedDrug:
 
 @dataclass(slots=True)
 class RankedEvidence:
+    """精排后的证据记录。"""
+
     evidence_id: str
     score: float
     rank: int
     text: str
     label: int
+
+
+@dataclass(slots=True)
+class RankedCase:
+    """单个病例的精排导出结果。"""
+
+    patient_id: str
+    split: DatasetSplit
+    ranked_drugs: list[RankedDrug]
 
 
 @dataclass(slots=True)

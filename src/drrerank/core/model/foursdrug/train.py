@@ -12,6 +12,7 @@ from scipy.sparse import csr_matrix
 from torch import Tensor
 
 from ...io import load_pickle, load_pickle_rows
+from ...schema import DrugRecMedicine
 from ..experiment.progress import build_progress
 from ..experiment.runner import ExperimentAdapter, run_training_experiment
 from ..experiment.schema import ComparableMetrics, ExperimentEvalResult
@@ -86,7 +87,14 @@ def load_split_rows(split_path: Path, limit: int | None) -> list[FourSDrugIndexe
     """加载单个 split 的索引病例。"""
 
     # 目的：兼容新版按行 pickle 导出，同时保持旧版整表 pickle 仍可直接读取。
-    return load_pickle_rows(split_path, limit)
+    rows: list[object] = load_pickle_rows(split_path, limit)
+    if any(not isinstance(row, FourSDrugIndexedRow) for row in rows):
+        # 目的：旧版 split 缺少 rerank 训练所需的候选药上下文，直接阻止静默跑错。
+        raise ValueError(
+            f"4SDrug 离线数据格式过旧: {split_path}。"
+            "请先重新执行 rerank-4sdrug-export，再启动训练。"
+        )
+    return cast(list[FourSDrugIndexedRow], rows)
 
 
 def build_candidate_mask(
@@ -320,14 +328,15 @@ def evaluate_model(
         with build_progress(rows, desc="验证", leave=False) as progress:
             row: FourSDrugIndexedRow
             for row in progress:
-                symptoms: Tensor = torch.tensor([row[0]], dtype=torch.long, device=device)
+                symptoms: Tensor = torch.tensor([row.symptoms], dtype=torch.long, device=device)
                 target: Tensor = torch.zeros(
                     (1, model.config.medicine_vocab_size),
                     dtype=torch.float32,
                     device=device,
                 )
-                medicine_ids: list[int] = list(dict.fromkeys(row[2]))
-                candidate_ids: list[int] = list(dict.fromkeys(row[3]))
+                medicine_ids: list[int] = list(dict.fromkeys(row.medicines))
+                candidate_ids: list[int] = list(dict.fromkeys(row.candidate_medicines))
+                candidate_drug_map: dict[str, DrugRecMedicine] = row.candidate_drugs
                 if medicine_ids:
                     target[0, np.asarray(medicine_ids, dtype=np.int64) - 1] = 1.0
                 candidate_mask: FourSDrugCandidateMaskTensor = build_candidate_mask(
@@ -350,6 +359,8 @@ def evaluate_model(
                         candidate_drug_ids=candidate_ids,
                         ddi_adj=ddi_adj,
                         threshold=threshold,
+                        candidate_drug_map=candidate_drug_map,
+                        on_medicines=row.on_medicines,
                         loss=loss,
                     ),
                 )

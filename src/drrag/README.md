@@ -130,6 +130,9 @@
 - 当前代码已经接入硅基流动 `chat/completions`
 - 当前实现默认使用 OpenAI 兼容请求体，并通过 `response_format={"type":"json_object"}` 强制 JSON 输出
 - 当前 `rag-generate-siliconflow` 默认 `limit=1`，目的不是节省功能，而是避免误触发大规模 LLM 对话
+- 当前 `rag-generate-siliconflow` 支持 `--workers`，用于并发发起多个病例请求；默认仍为 `1`
+- 当前 `rag-generate-siliconflow` 会显示 `tqdm` 总进度条，并把断点续跑时跳过的已完成样本计入初始进度
+- 当前 `rag-generate-siliconflow` 会按固定批次阶段写盘；若单条请求发生远端断连，会落为失败记录而不是中断整批任务
 - 当前 `rag-eval-generation` 只评估已落盘结果，不会重复发起在线请求
 - 当前 `rag-run-experiment` 固定两种输入方案：`retrieval_direct`、`tracedr_rerank`
 - 当前 `rag-run-experiment` 会固定 `top-k`、模型、提示词与输出命名，并额外产出结果表与案例分析 Markdown

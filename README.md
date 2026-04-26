@@ -227,12 +227,14 @@ uv run rerank-import-tracedr --split test
 - 当前 `drrerank` 训练入口在交互式终端下显示 `tqdm` 进度条；若运行环境不是 TTY（例如 `uv` 子进程日志面板、部分 IDE 终端采集面板），则不再周期性输出进度文本，仅保留每个 epoch 的摘要日志，避免训练输出过于臃肿
 - 当前项目所有 Hugging Face `AutoModel.from_pretrained(...)` 均固定使用 `use_safetensors=False`，关闭 safetensors 自动转换探测
 - 若在 WSL 代理环境下使用 Hugging Face 下载模型，项目依赖已包含 `socksio`，执行 `uv sync` 后即可为 `httpx` 提供 SOCKS 代理支持
+- 当前依赖已拆成“基础训练环境 + 检索可选依赖”；默认 `uv sync` 不再安装 `pyserini`、`neo4j`、`rank-bm25`
+- 若要执行检索侧命令，需显式安装检索依赖：`uv sync --extra retrieval`
 - `rerank-tracedr-train` 默认读取 `resource/patient_candidate/tracedr_top50/train.jsonl`，并可额外传入 `--test-input`
-- `rerank-4sdrug-export` 当前 CLI 入口位于 `src/drrerank/foursdrug_export.py`
 - `rerank-tracedr-train` 现支持 4 组关键消融开关：`--num-layers 0`、`--disable-evidence-supervision`、`--evidence-text-mode name_only`、`--exclude-on-medicine`
 - `rerank-tracedr-train-adl` 会在训练完成后额外写出 `output/model/<output_name>.adl.json`，其中包含训练配置、GPU 信息、git 状态、耗时、最终指标与产物路径
-- `scripts/run_tracedr_train_adl.sh` 适合直接在 ADL 云 GPU 上执行；脚本会自动 `uv sync`、落盘日志并调用 `rerank-tracedr-train-adl`
+- `scripts/run_tracedr_train_adl.sh` 适合直接在 ADL 云 GPU 上执行；脚本会自动 `uv sync`、默认切到清华 PyPI 镜像、落盘日志并调用 `rerank-tracedr-train-adl`
 - `rerank-tracedr-export-rank` 若用于导出消融 checkpoint，对应传入同口径参数：`--num-layers`、`--evidence-text-mode`、`--exclude-on-medicine`
+- `rerank-4sdrug-export` 当前 CLI 入口位于 `src/drrerank/foursdrug_export.py`
 - `rerank-4sdrug-train` 当前 CLI 入口位于 `src/drrerank/foursdrug_train.py`
 - `rerank-tracedr-export-rank` 当前 CLI 入口位于 `src/drrerank/tracedr_export_rank.py`
 - `rerank-tracedr-train` 当前 CLI 入口位于 `src/drrerank/tracedr_train.py`
@@ -253,13 +255,10 @@ RAG 侧：
 uv run rag-export-cases --input resource/patient_candidate/tracedr_top50/test.jsonl --top-k 20
 uv run rerank-tracedr-export-rank --input resource/patient_candidate/tracedr_top50/test.jsonl --checkpoint resource/model/tracedr_top50_compare_tracedr.pt
 uv run rag-apply-rerank --input resource/patient_candidate/tracedr_top50/test.jsonl --ranked-input output/rerank/test__tracedr_top50_compare_tracedr.jsonl --top-k 20
-uv run rag-generate-siliconflow --input output/rag/cases/test__tracedr_rerank__top20.jsonl --input-format rag_case --model Qwen/Qwen3-30B-A3B-Instruct-2507 --top-k 20 --limit 1 --overwrite
+uv run rag-generate-siliconflow --input output/rag/cases/test__tracedr_rerank__top20.jsonl --input-format rag_case --model Qwen/Qwen3-30B-A3B-Instruct-2507 --top-k 20 --limit 1 --workers 4 --overwrite
 uv run rag-eval-generation --input output/rag/generation/test__tracedr_rerank__top20__Qwen__Qwen3_30B_A3B_Instruct_2507__recommend__top20__ev3.jsonl
 uv run rag-run-experiment --input resource/patient_candidate/tracedr_top50/test.jsonl --checkpoint resource/model/tracedr_top50_compare_tracedr.pt --top-ks 10,20,50 --variants retrieval_direct,tracedr_rerank --limit 3 --overwrite
 ```
-
-说明：
-
 
 ADL 云 GPU 训练可直接执行：
 
@@ -276,10 +275,20 @@ bash scripts/run_tracedr_train_adl.sh \
 
 ```bash
 bash scripts/run_tracedr_train_adl.sh \
+  --output-name tracedr_top50_no_gnn \
+  --epochs 5 \
+  --num-layers 0
+```
+
+说明：
+
 - `rag-export-cases` 会把 TraceDR 风格候选集规整为统一 `RagCase` 协议，默认写到 `output/rag/cases/`
 - `rag-apply-rerank` 会把病例级精排结果补到 `RagCase` 的 `rerank_rank` / `rerank_score` 字段；若传入 `--top-k`，会按统一实验排序规则冻结最终候选规模
 - `rag-generate-siliconflow` 会调用硅基流动 `chat/completions`，并通过 `response_format={"type":"json_object"}` 强制结构化输出
 - `rag-generate-siliconflow` 默认 `limit=1`，避免误触发大批量 LLM 对话；需要显式传更大的 `--limit`
+- `rag-generate-siliconflow` 支持 `--workers`，可并发发起多个病例请求；默认 `1`，保持旧的串行行为
+- `rag-generate-siliconflow` 会显示 `tqdm` 总进度条，并把断点续跑时跳过的已完成样本计入初始进度
+- `rag-generate-siliconflow` 遇到单条远端断连时会把该样本记为失败记录，并按固定批次阶段写盘，避免长任务中途异常时整段进度丢失
 - `rag-generate-siliconflow` 的默认输出文件名现在会编码 `top-k` 与 `max_evidences_per_candidate`，避免不同生成配置复用同一结果文件
 - `rag-eval-generation` 只读取已生成结果离线计算结构合法率、字段完整率、证据引用约束与 gold 命中情况，不会重复请求 LLM
 - `rag-run-experiment` 会固定输入对比组、`top-k`、模型、提示词和输出命名，自动串起 `rag-export-cases` / `rerank-tracedr-export-rank` / `rag-apply-rerank` / `rag-generate-siliconflow` / `rag-eval-generation`

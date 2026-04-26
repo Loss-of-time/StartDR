@@ -30,15 +30,17 @@ mkdir -p "$(dirname "${LOG_PATH}")" "$(dirname "${DETAILED_REPORT_PATH}")"
 
 cd "${PROJECT_DIR}"
 export TOKENIZERS_PARALLELISM=false
+export UV_DEFAULT_INDEX="${UV_DEFAULT_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 
 echo "开始执行 ADL TraceDR 训练"
 echo "项目目录: ${PROJECT_DIR}"
 echo "日志路径: ${LOG_PATH}"
 echo "详细报告: ${DETAILED_REPORT_PATH}"
+echo "UV 默认源: ${UV_DEFAULT_INDEX}"
 
 # 目的：先在远端实例内对齐依赖，再进入统一训练入口，避免 ADL 新机器缺包。
 uv sync
-uv run rerank-tracedr-train-adl \
+uv run --no-sync rerank-tracedr-train-adl \
     --detailed-report-path "${DETAILED_REPORT_PATH}" \
     --log-path "${LOG_PATH}" \
     "$@" 2>&1 | tee "${LOG_PATH}"

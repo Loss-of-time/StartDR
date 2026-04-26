@@ -12,16 +12,20 @@ dependencies = [
     "cattrs",
     "jaxtyping",
     "jieba",
-    "neo4j",
     "pyright>=1.1.405",
-    "pyserini",
-    "rank-bm25",
     "socksio",
     "tqdm",
     "torch",
     "torch-geometric",
     "transformers",
     "viztracer>=1.1.1",
+]
+
+[project.optional-dependencies]
+retrieval = [
+    "neo4j",
+    "pyserini",
+    "rank-bm25",
 ]
 
 [tool.uv.sources]

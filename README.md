@@ -229,6 +229,10 @@ uv run rerank-import-tracedr --split test
 - 若在 WSL 代理环境下使用 Hugging Face 下载模型，项目依赖已包含 `socksio`，执行 `uv sync` 后即可为 `httpx` 提供 SOCKS 代理支持
 - `rerank-tracedr-train` 默认读取 `resource/patient_candidate/tracedr_top50/train.jsonl`，并可额外传入 `--test-input`
 - `rerank-4sdrug-export` 当前 CLI 入口位于 `src/drrerank/foursdrug_export.py`
+- `rerank-tracedr-train` 现支持 4 组关键消融开关：`--num-layers 0`、`--disable-evidence-supervision`、`--evidence-text-mode name_only`、`--exclude-on-medicine`
+- `rerank-tracedr-train-adl` 会在训练完成后额外写出 `output/model/<output_name>.adl.json`，其中包含训练配置、GPU 信息、git 状态、耗时、最终指标与产物路径
+- `scripts/run_tracedr_train_adl.sh` 适合直接在 ADL 云 GPU 上执行；脚本会自动 `uv sync`、落盘日志并调用 `rerank-tracedr-train-adl`
+- `rerank-tracedr-export-rank` 若用于导出消融 checkpoint，对应传入同口径参数：`--num-layers`、`--evidence-text-mode`、`--exclude-on-medicine`
 - `rerank-4sdrug-train` 当前 CLI 入口位于 `src/drrerank/foursdrug_train.py`
 - `rerank-tracedr-export-rank` 当前 CLI 入口位于 `src/drrerank/tracedr_export_rank.py`
 - `rerank-tracedr-train` 当前 CLI 入口位于 `src/drrerank/tracedr_train.py`
@@ -256,6 +260,22 @@ uv run rag-run-experiment --input resource/patient_candidate/tracedr_top50/test.
 
 说明：
 
+
+ADL 云 GPU 训练可直接执行：
+
+```bash
+bash scripts/run_tracedr_train_adl.sh \
+  --output-name tracedr_top50_adl \
+  --epochs 5 \
+  --train-input resource/patient_candidate/tracedr_top50/train.jsonl \
+  --dev-input resource/patient_candidate/tracedr_top50/dev.jsonl \
+  --test-input resource/patient_candidate/tracedr_top50/test.jsonl
+```
+
+若要跑关键消融，只需在同一脚本后追加对应参数，例如：
+
+```bash
+bash scripts/run_tracedr_train_adl.sh \
 - `rag-export-cases` 会把 TraceDR 风格候选集规整为统一 `RagCase` 协议，默认写到 `output/rag/cases/`
 - `rag-apply-rerank` 会把病例级精排结果补到 `RagCase` 的 `rerank_rank` / `rerank_score` 字段；若传入 `--top-k`，会按统一实验排序规则冻结最终候选规模
 - `rag-generate-siliconflow` 会调用硅基流动 `chat/completions`，并通过 `response_format={"type":"json_object"}` 强制结构化输出

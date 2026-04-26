@@ -52,6 +52,7 @@ rerank-kgd-export = "drrerank.kgd_export:main"
 rerank-kgd-train = "drrerank.kgd_train:main"
 rerank-tracedr-export-rank = "drrerank.tracedr_export_rank:main"
 rerank-tracedr-train = "drrerank.tracedr_train:main"
+rerank-tracedr-train-adl = "drrerank.tracedr_train_adl:main"
 treeify-function-graph = "function_graph.treeify_cli:main"
 
 [tool.ruff]

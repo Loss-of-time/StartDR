@@ -10,12 +10,23 @@ from ...schema import DrugRecMedicine
 type TraceDRQuestionId = int | str
 type TraceDRNodeId = int | str
 type TraceDREntityType = Literal["药品", "治疗", "禁用", "成分", "相互作用", ""]
+type TraceDREvidenceTextMode = Literal["full", "name_only"]
 type EntityEvidenceMatrix = Float[Tensor, "entity evidence"]
 type EvidenceEntityMatrix = Float[Tensor, "evidence entity"]
 type EntityMaskTensor = Float[Tensor, "entity"]
 type EvidenceMaskTensor = Float[Tensor, "evidence"]
 type EntityLabelTensor = Int[Tensor, "entity"]
 type EvidenceLabelTensor = Int[Tensor, "evidence"]
+
+
+@dataclass(slots=True)
+class TraceDRAblationConfig:
+    """TraceDR 关键消融配置。"""
+
+    num_layers: int = 3
+    use_evidence_supervision: bool = True
+    evidence_text_mode: TraceDREvidenceTextMode = "full"
+    include_on_medicine: bool = True
 
 
 @dataclass(slots=True)

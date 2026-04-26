@@ -119,8 +119,8 @@ class FullEncoder(nn.Module):
         assert last_hidden_state is not None
         lm_encodings: TokenEmbeddings = last_hidden_state.to(self.device)
         attention_mask_tensor = cast(Tensor, tokenized_input["attention_mask"])
-        attention_mask: Float[Tensor, "batch seq 1"] = (
-            attention_mask_tensor.unsqueeze(dim=2).to(lm_encodings.dtype)
+        attention_mask: Float[Tensor, "batch seq 1"] = attention_mask_tensor.unsqueeze(dim=2).to(
+            lm_encodings.dtype
         )
         pooled_sum: Float[Tensor, "batch hidden"] = torch.sum(lm_encodings * attention_mask, dim=1)
         pooled_count: Float[Tensor, "batch 1"] = torch.sum(attention_mask, dim=1).clamp(min=1.0)
@@ -210,11 +210,18 @@ class GNNLayer(nn.Module):
 
 
 class MultitaskBilinearAnswering(nn.Module):
-    def __init__(self, emb_dimension=768, max_entities=100, max_evidence=50):
+    def __init__(
+        self,
+        emb_dimension: int = 768,
+        max_entities: int = 100,
+        max_evidence: int = 50,
+        use_evidence_supervision: bool = True,
+    ) -> None:
         super().__init__()
         self.emb_dimension = emb_dimension
         self.max_entities = max_entities
         self.max_evidences = max_evidence
+        self.use_evidence_supervision = use_evidence_supervision
 
         self.bilinear_answer = nn.Bilinear(
             emb_dimension, emb_dimension, 1
@@ -289,9 +296,13 @@ class MultitaskBilinearAnswering(nn.Module):
             sample.evidence_mask.view(-1),
         )
 
-        ANSWER_WEIGHT = 0.5
-        EV_WEIGHT = 1 - ANSWER_WEIGHT
-        loss += ANSWER_WEIGHT * answer_loss + EV_WEIGHT * evidence_loss
+        # 目的：在同一训练入口中切换“是否保留证据监督”，避免维护第二套 answering 逻辑。
+        if self.use_evidence_supervision:
+            ANSWER_WEIGHT = 0.5
+            EV_WEIGHT = 1 - ANSWER_WEIGHT
+            loss += ANSWER_WEIGHT * answer_loss + EV_WEIGHT * evidence_loss
+        else:
+            loss += answer_loss
         # entity_accuracy = self._get_masked_accuracy(
         #     answer_logits,
         #     sample.entity_labels,
@@ -315,6 +326,7 @@ class HeterogeneousGNN(nn.Module):
         dropout: float = 0.0,
         max_entities: int = 100,
         max_evidences: int = 50,
+        use_evidence_supervision: bool = True,
     ) -> None:
         super().__init__()
         self.emb_dimension = emb_dimension
@@ -338,7 +350,8 @@ class HeterogeneousGNN(nn.Module):
         self.answering = MultitaskBilinearAnswering(
             emb_dimension=emb_dimension,
             max_entities=max_entities,
-            max_evidence=max_evidences
+            max_evidence=max_evidences,
+            use_evidence_supervision=use_evidence_supervision,
         )
 
         self.cuda()

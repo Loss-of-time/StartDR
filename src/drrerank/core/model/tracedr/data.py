@@ -5,7 +5,13 @@ import numpy as np
 import torch
 
 from ...schema import DrugRecMedicine, DrugRecRecord, TraceDRSample
-from .schema import TraceDREntity, TraceDREvidence, TraceDRModelSample, TraceDRNodeId
+from .schema import (
+    TraceDRAblationConfig,
+    TraceDREntity,
+    TraceDREvidence,
+    TraceDRModelSample,
+    TraceDRNodeId,
+)
 
 
 class ContinueWithNext(Exception):
@@ -26,15 +32,37 @@ def _deduplicate_medicines_by_drugid(
 
 
 def build_model_sample(
-    sample: TraceDRSample, train: bool = False, max_entities=100, max_evidences: int = 50
+    sample: TraceDRSample,
+    train: bool = False,
+    max_entities: int = 100,
+    max_evidences: int = 50,
+    ablation_config: TraceDRAblationConfig | None = None,
 ) -> TraceDRModelSample | None:
+    """构造 TraceDR 模型输入样本。
+
+    Args:
+        sample: 原始病例样本。
+        train: 是否按训练模式构造。
+        max_entities: 最大实体数。
+        max_evidences: 最大证据数。
+        ablation_config: 关键消融配置。
+
+    Returns:
+        可直接送入模型的样本；若训练样本在候选空间中不含答案则返回空。
+    """
+
+    # 目的：把消融开关统一收敛到单一配置，避免训练与导出阶段分叉。
+    resolved_ablation_config: TraceDRAblationConfig = (
+        ablation_config if ablation_config is not None else TraceDRAblationConfig()
+    )
     tsf: str = _person_to_query(sample.people)
     topk_drugs = sample.top_k_drugs.values()
     gold_answers = [medicine.drugid for medicine in sample.people.medicine]
     gold_answer_set = set(gold_answers)
     # evidence 是候选药物 entities 是药物有关属性
     evidences: list[DrugRecMedicine] = list()
-    evidences.extend(sample.people.on_medicine)
+    if resolved_ablation_config.include_on_medicine:
+        evidences.extend(sample.people.on_medicine)
     evidences.extend(topk_drugs)
     evidences = _deduplicate_medicines_by_drugid(evidences)
     if len(evidences) > max_evidences:
@@ -73,7 +101,7 @@ def build_model_sample(
     num_evidences = 0
 
     for drug in evidences:
-        evidence_text = _get_evidence_text(drug)
+        evidence_text = _get_evidence_text(drug, resolved_ablation_config.evidence_text_mode)
         drug_entity = TraceDREntity(drug.drugid, drug.name, "药品")
         entities = [
             drug_entity,
@@ -235,7 +263,24 @@ def _person_to_query(person: DrugRecRecord, delimiter: str = " || "):
     return query
 
 
-def _get_evidence_text(evidence: DrugRecMedicine):
+def _get_evidence_text(
+    evidence: DrugRecMedicine,
+    evidence_text_mode: str,
+) -> str:
+    """按配置构造证据文本。
+
+    Args:
+        evidence: 药物明细。
+        evidence_text_mode: 证据文本模式。
+
+    Returns:
+        证据文本。
+    """
+
+    # 目的：把证据文本缩减消融限制在单一入口，避免图构造逻辑散落在多处。
+    if evidence_text_mode == "name_only":
+        return f"药名:{evidence.name}"
+
     treatments = [item.treat for item in evidence.treat if item.treat is not None]
     treatments_string = ", ".join(treatments) if treatments else "None"
 

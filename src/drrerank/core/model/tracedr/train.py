@@ -24,7 +24,7 @@ from ..pointwise_training import (
 from .data import build_model_sample
 from .metrics import TraceDRMetrics, aggregate_metrics, calculate_metrics
 from .model import HeterogeneousGNN, TraceDRForwardResult
-from .schema import TraceDREntity, TraceDRModelSample
+from .schema import TraceDRAblationConfig, TraceDREntity, TraceDRModelSample
 
 type TraceDRSnapshot = PointwiseSnapshot
 type TraceDRTrainState = PointwiseTrainState[HeterogeneousGNN, TraceDRModelSample]
@@ -43,6 +43,10 @@ class TrainConfig:
     dev_limit: int | None = None
     test_limit: int | None = None
     selection_metric: str = "mrr"
+    num_layers: int = 3
+    use_evidence_supervision: bool = True
+    evidence_text_mode: str = "full"
+    include_on_medicine: bool = True
 
 
 @dataclass(slots=True)
@@ -72,6 +76,7 @@ def load_samples(
     input_path: Path,
     limit: int | None,
     train: bool = True,
+    ablation_config: TraceDRAblationConfig | None = None,
 ) -> list[TraceDRModelSample]:
     """加载并构造 TraceDR 样本。
 
@@ -79,6 +84,7 @@ def load_samples(
         input_path: 输入 `jsonl` 路径。
         limit: 样本数量上限。
         train: 是否按训练模式构造样本。
+        ablation_config: 关键消融配置。
 
     Returns:
         可直接送入模型的样本列表。
@@ -88,7 +94,14 @@ def load_samples(
     return [
         model_sample
         for sample in raw_samples
-        if (model_sample := build_model_sample(sample, train=train)) is not None
+        if (
+            model_sample := build_model_sample(
+                sample,
+                train=train,
+                ablation_config=ablation_config,
+            )
+        )
+        is not None
     ]
 
 
@@ -233,6 +246,13 @@ class TraceDRTrainAdapter(ExperimentAdapter[TrainConfig, TraceDRTrainState, Trac
     def setup(self, config: TrainConfig) -> TraceDRTrainState:
         """构造 TraceDR 训练状态。"""
 
+        # 目的：把关键消融参数固定在 setup 阶段，确保训练/验证/测试共用同一口径。
+        ablation_config: TraceDRAblationConfig = TraceDRAblationConfig(
+            num_layers=config.num_layers,
+            use_evidence_supervision=config.use_evidence_supervision,
+            evidence_text_mode=config.evidence_text_mode,
+            include_on_medicine=config.include_on_medicine,
+        )
         train_samples: list[TraceDRModelSample]
         dev_samples: list[TraceDRModelSample]
         test_samples: list[TraceDRModelSample]
@@ -243,11 +263,19 @@ class TraceDRTrainAdapter(ExperimentAdapter[TrainConfig, TraceDRTrainState, Trac
             train_limit=config.train_limit,
             dev_limit=config.dev_limit,
             test_limit=config.test_limit,
-            load_samples=load_samples,
+            load_samples=lambda input_path, limit, train: load_samples(
+                input_path,
+                limit,
+                train,
+                ablation_config=ablation_config,
+            ),
             experiment_name="TraceDR",
         )
 
-        model: HeterogeneousGNN = HeterogeneousGNN()
+        model: HeterogeneousGNN = HeterogeneousGNN(
+            num_layers=config.num_layers,
+            use_evidence_supervision=config.use_evidence_supervision,
+        )
         model.train()
         optimizer: torch.optim.Optimizer = torch.optim.AdamW(
             model.parameters(),

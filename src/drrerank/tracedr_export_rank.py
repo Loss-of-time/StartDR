@@ -10,6 +10,7 @@ import torch
 from .core.io import write_jsonl
 from .core.model.tracedr.data import build_model_sample
 from .core.model.tracedr.model import HeterogeneousGNN
+from .core.model.tracedr.schema import TraceDRAblationConfig
 from .core.model.tracedr.train import RankedAnswer, build_ranked_answers
 from .core.schema import DrugRecMedicine, RankedCase, RankedDrug, TraceDRSample, unstructure
 from .core.setting import DEFAULT_MODEL_OUTPUT_DIR, DEFAULT_RERANK_OUTPUT_DIR
@@ -24,6 +25,7 @@ class ExportRankConfig:
     checkpoint_path: Path
     output_path: Path
     limit: int | None
+    ablation_config: TraceDRAblationConfig
 
 
 def build_default_output_path(input_path: Path, checkpoint_path: Path) -> Path:
@@ -58,17 +60,25 @@ def resolve_checkpoint_path(raw_path: Path) -> Path:
     return DEFAULT_MODEL_OUTPUT_DIR / raw_path
 
 
-def load_model(checkpoint_path: Path) -> HeterogeneousGNN:
+def load_model(
+    checkpoint_path: Path,
+    ablation_config: TraceDRAblationConfig,
+) -> HeterogeneousGNN:
     """加载 TraceDR checkpoint。
 
     Args:
         checkpoint_path: checkpoint 路径。
+        ablation_config: 关键消融配置。
 
     Returns:
         已加载权重的 TraceDR 模型。
     """
 
-    model: HeterogeneousGNN = HeterogeneousGNN()
+    # 目的：导出阶段按训练时的图层配置实例化模型，确保消融 checkpoint 可直接复现。
+    model: HeterogeneousGNN = HeterogeneousGNN(
+        num_layers=ablation_config.num_layers,
+        use_evidence_supervision=ablation_config.use_evidence_supervision,
+    )
     state_dict: dict[str, torch.Tensor] = torch.load(checkpoint_path)
     model.load_state_dict(state_dict)
     model.eval()
@@ -117,18 +127,24 @@ def build_ranked_drugs(
 def build_ranked_case(
     model: HeterogeneousGNN,
     sample: TraceDRSample,
+    ablation_config: TraceDRAblationConfig,
 ) -> RankedCase:
     """对单个病例执行 TraceDR 精排导出。
 
     Args:
         model: 已加载权重的 TraceDR 模型。
         sample: 单个 TraceDR 样本。
+        ablation_config: 关键消融配置。
 
     Returns:
         单病例精排结果。
     """
 
-    model_sample = build_model_sample(sample, train=False)
+    model_sample = build_model_sample(
+        sample,
+        train=False,
+        ablation_config=ablation_config,
+    )
     if model_sample is None:
         return RankedCase(
             patient_id=sample.people.id,
@@ -155,9 +171,14 @@ def export_ranked_cases(config: ExportRankConfig) -> Path:
         输出文件路径。
     """
 
-    model: HeterogeneousGNN = load_model(config.checkpoint_path)
+    model: HeterogeneousGNN = load_model(
+        config.checkpoint_path,
+        config.ablation_config,
+    )
     samples: list[TraceDRSample] = load_tracedr_samples(config.input_path, limit=config.limit)
-    ranked_cases: list[RankedCase] = [build_ranked_case(model, sample) for sample in samples]
+    ranked_cases: list[RankedCase] = [
+        build_ranked_case(model, sample, config.ablation_config) for sample in samples
+    ]
     # 目的：把 TraceDR 的病例级排序结果冻结成 jsonl 交接件，供 drrag 直接复用。
     write_jsonl(
         path=config.output_path,
@@ -178,6 +199,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--num-layers", type=int, default=3)
+    parser.add_argument(
+        "--evidence-text-mode",
+        type=str,
+        choices=("full", "name_only"),
+        default="full",
+    )
+    parser.add_argument(
+        "--exclude-on-medicine",
+        action="store_true",
+    )
     return parser.parse_args()
 
 
@@ -197,6 +229,13 @@ def main() -> None:
             checkpoint_path=checkpoint_path,
             output_path=output_path,
             limit=args.limit,
+            ablation_config=TraceDRAblationConfig(
+                # 目的：导出阶段复用训练时的关键输入口径，避免案例分析读取到错误特征空间。
+                num_layers=args.num_layers,
+                use_evidence_supervision=True,
+                evidence_text_mode=args.evidence_text_mode,
+                include_on_medicine=not args.exclude_on_medicine,
+            ),
         )
     )
 

@@ -16,6 +16,7 @@
 - `uv run rag-generate-siliconflow`
 - `uv run rag-eval-generation`
 - `uv run rag-run-experiment`
+- `uv run recommend-api`
 
 ## SiliconFlow 环境变量
 
@@ -125,7 +126,7 @@
 
 需要明确：
 
-- 当前 `rag-apply-rerank` 会把病例级精排结果补到统一 `RagCase`，供后续 prompt 优先按 `rerank_rank` 选择候选
+- 当前 `rag-apply-rerank` 会把病例级精排结果补到统一 `RagCase`，同时补齐候选药与证据的 `rerank_rank/score`，供后续 prompt 优先按精排结果选择
 - 当前 `rag-apply-rerank` 支持 `--top-k`，用于按统一实验口径冻结最终进入 RAG 的候选规模
 - 当前代码已经接入硅基流动 `chat/completions`
 - 当前实现默认使用 OpenAI 兼容请求体，并通过 `response_format={"type":"json_object"}` 强制 JSON 输出
@@ -136,3 +137,9 @@
 - 当前 `rag-eval-generation` 只评估已落盘结果，不会重复发起在线请求
 - 当前 `rag-run-experiment` 固定两种输入方案：`retrieval_direct`、`tracedr_rerank`
 - 当前 `rag-run-experiment` 会固定 `top-k`、模型、提示词与输出命名，并额外产出结果表与案例分析 Markdown
+- 当前 `recommend-api` 只负责在线推荐推理 API，不负责前端页面
+- 当前 `recommend-api` 会在服务启动时预加载药品缓存、Pyserini 检索器与 TraceDR checkpoint
+- 当前 `recommend-api` 的默认运行口径固定为 `top50` 检索、`top10` 展示、每药 `1` 条基础证据
+- 当前 `recommend-api` 返回体中的 `evidence_map` 只保留最终被 `recommendation.items[*].evidence_ids` 实际引用的证据
+- 当前 `recommend-api` 返回体中的 `evidence_map` 会优先展示 TraceDR 精排后的证据文本、证据排序与证据分数；若未命中精排证据，则保留 retrieval 默认值
+- 当前 `recommend-api` 会在 `evidence_map[evidence_id].graph_relations` 中返回该被引用证据对应的底层图谱关系全集，供前端展开展示；这不是检索阶段全部候选关系，也不是子关系级命中判定结果

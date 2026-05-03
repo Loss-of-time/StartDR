@@ -19,6 +19,12 @@
 - `output/rag/generation/*.jsonl`
 - `output/rag/eval/*.json`
 
+当前仓库还提供一个最小在线推荐推理 API：
+
+- `recommend-api`
+- 只负责在线检索、在线精排、在线 RAG 解释与风险汇总
+- 不负责前端页面、用户体系与持久化
+
 ## 目录结构
 
 ```text
@@ -123,6 +129,7 @@ StartDR/
 - `rag-generate-siliconflow`
 - `rag-eval-generation`
 - `rag-run-experiment`
+- `recommend-api`
 
 默认产物：
 
@@ -140,6 +147,13 @@ StartDR/
 - `resource/model/`：当前实际使用的已训练模型权重
 - `resource/patient_candidate/`：TraceDR 风格候选集 `jsonl`
 - `resource/cache/`：Neo4j 查询缓存、稠密检索向量缓存、Pyserini 索引
+
+在线 API 额外依赖：
+
+- `resource/cache/drretrieval__core__kg__list_full_drug_details.pkl`
+- `resource/cache/pyserini_bm25_zh/`
+- `resource/model/tracedr_top50_compare_tracedr.pt`
+- `SILICONFLOW_API_KEY`
 
 ## 环境
 
@@ -232,7 +246,6 @@ uv run rerank-import-tracedr --split test
 - `rerank-tracedr-train` 默认读取 `resource/patient_candidate/tracedr_top50/train.jsonl`，并可额外传入 `--test-input`
 - `rerank-tracedr-train` 现支持 4 组关键消融开关：`--num-layers 0`、`--disable-evidence-supervision`、`--evidence-text-mode name_only`、`--exclude-on-medicine`
 - `rerank-tracedr-train-adl` 会在训练完成后额外写出 `output/model/<output_name>.adl.json`，其中包含训练配置、GPU 信息、git 状态、耗时、最终指标与产物路径
-- `scripts/run_tracedr_train_adl.sh` 适合直接在 ADL 云 GPU 上执行；脚本会自动 `uv sync`、默认切到清华 PyPI 镜像、落盘日志并调用 `rerank-tracedr-train-adl`
 - `rerank-tracedr-export-rank` 若用于导出消融 checkpoint，对应传入同口径参数：`--num-layers`、`--evidence-text-mode`、`--exclude-on-medicine`
 - `rerank-4sdrug-export` 当前 CLI 入口位于 `src/drrerank/foursdrug_export.py`
 - `rerank-4sdrug-train` 当前 CLI 入口位于 `src/drrerank/foursdrug_train.py`
@@ -260,25 +273,6 @@ uv run rag-eval-generation --input output/rag/generation/test__tracedr_rerank__t
 uv run rag-run-experiment --input resource/patient_candidate/tracedr_top50/test.jsonl --checkpoint resource/model/tracedr_top50_compare_tracedr.pt --top-ks 10,20,50 --variants retrieval_direct,tracedr_rerank --limit 3 --overwrite
 ```
 
-ADL 云 GPU 训练可直接执行：
-
-```bash
-bash scripts/run_tracedr_train_adl.sh \
-  --output-name tracedr_top50_adl \
-  --epochs 5 \
-  --train-input resource/patient_candidate/tracedr_top50/train.jsonl \
-  --dev-input resource/patient_candidate/tracedr_top50/dev.jsonl \
-  --test-input resource/patient_candidate/tracedr_top50/test.jsonl
-```
-
-若要跑关键消融，只需在同一脚本后追加对应参数，例如：
-
-```bash
-bash scripts/run_tracedr_train_adl.sh \
-  --output-name tracedr_top50_no_gnn \
-  --epochs 5 \
-  --num-layers 0
-```
 
 说明：
 
@@ -297,6 +291,50 @@ bash scripts/run_tracedr_train_adl.sh \
   `output/rag/generation/*.jsonl`、
   `output/rag/eval/*__comparison_table.{json,md}`、
   `output/rag/eval/*__case_analysis.md`
+- `recommend-api` 会在服务启动时预加载药品缓存、Pyserini 检索器与 TraceDR checkpoint；默认口径固定为 `top50` 检索、`top10` 展示、每药 `1` 条证据
+
+## 在线推荐 API
+
+定位：
+
+- 当前仓库只实现在线推荐推理 API，不实现前端页面
+- 该 API 只服务于答辩原型与外部 Vue 前端对接
+- 当前 API 不保存推荐历史，不提供用户体系与权限体系
+
+启动前提：
+
+- 基础依赖：`uv sync`
+- 检索依赖：`uv sync --extra retrieval`
+- 已配置 `SILICONFLOW_API_KEY`
+- 已准备本地药品缓存、Pyserini 索引与 `TraceDR` checkpoint
+- 当前 `TraceDR` 推理链依赖 CUDA
+
+启动命令：
+
+```powershell
+uv run recommend-api
+```
+
+常用参数：
+
+```powershell
+uv run recommend-api --host 127.0.0.1 --port 8000 --checkpoint resource/model/tracedr_top50_compare_tracedr.pt --rag-model Qwen/Qwen3-30B-A3B-Instruct-2507 --retrieval-top-k 50 --display-top-k 10 --max-evidences-per-candidate 1 --cors-origins http://localhost:5173,http://127.0.0.1:5173
+```
+
+接口：
+
+- `GET /health`
+- `GET /api/drugs/search?q=<关键词>&limit=<N>`
+- `POST /api/recommend`
+
+说明：
+
+- `/api/drugs/search` 用于前端先搜药、再把 `drugid` 传入推荐接口
+- `/api/recommend` 请求体固定为结构化病例字段，不接受自然语言整段输入
+- 推荐结果固定返回 `normalized_patient`、`retrieval`、`rerank`、`recommendation`、`evidence_map`、`risk_summary`、`pipeline_meta`、`timings_ms`
+- 详细接口示例见 [docs/api_usage.md](/home/oss_loss/dev/StartDR/docs/api_usage.md)
+- 前后端字段契约见 [docs/frontend_contract.md](/home/oss_loss/dev/StartDR/docs/frontend_contract.md)
+- 架构图与模块说明见 [docs/system_architecture.md](/home/oss_loss/dev/StartDR/docs/system_architecture.md)
 
 ## 当前状态
 

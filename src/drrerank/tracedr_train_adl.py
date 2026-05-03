@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import torch
 
@@ -338,7 +339,7 @@ def main() -> None:
             log_path=str(args.log_path.resolve()) if args.log_path is not None else None,
         ),
         metrics=build_metric_snapshot(training_run.report),
-        training_run=unstructure(training_run),
+        training_run=cast(dict[str, object], unstructure(training_run)),
     )
     # 目的：把 ADL 远端训练元信息与统一实验报告合并到单一 JSON，便于后续归档与追溯。
     write_detailed_report(detailed_report_path, detailed_report)

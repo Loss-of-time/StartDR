@@ -11,7 +11,11 @@ from .core.io import write_jsonl
 from .core.model.tracedr.data import build_model_sample
 from .core.model.tracedr.model import HeterogeneousGNN
 from .core.model.tracedr.schema import TraceDRAblationConfig
-from .core.model.tracedr.train import RankedAnswer, build_ranked_answers
+from .core.model.tracedr.train import (
+    RankedAnswer,
+    build_ranked_answers,
+    build_ranked_evidences,
+)
 from .core.schema import DrugRecMedicine, RankedCase, RankedDrug, TraceDRSample, unstructure
 from .core.setting import DEFAULT_MODEL_OUTPUT_DIR, DEFAULT_RERANK_OUTPUT_DIR
 from .core.tracedr import load_tracedr_samples
@@ -150,6 +154,7 @@ def build_ranked_case(
             patient_id=sample.people.id,
             split=sample.people.part,
             ranked_drugs=[],
+            ranked_evidences=[],
         )
     with torch.no_grad():
         result = model(model_sample.to_cuda())
@@ -158,6 +163,7 @@ def build_ranked_case(
         patient_id=sample.people.id,
         split=sample.people.part,
         ranked_drugs=build_ranked_drugs(sample, ranked_answers),
+        ranked_evidences=build_ranked_evidences(model_sample, result),
     )
 
 

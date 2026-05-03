@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from drrerank.core.model.tracedr.schema import TraceDRAblationConfig
 from drrerank.core.setting import DEFAULT_RERANK_OUTPUT_DIR
 from drrerank.tracedr_export_rank import ExportRankConfig, export_ranked_cases
 
@@ -343,6 +344,7 @@ def run_rag_experiment(config: RagExperimentConfig) -> RagExperimentArtifacts:
                 checkpoint_path=config.checkpoint_path,
                 output_path=ranked_path,
                 limit=config.limit,
+                ablation_config=TraceDRAblationConfig(),
             )
         )
 

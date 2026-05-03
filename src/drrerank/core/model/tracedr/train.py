@@ -6,7 +6,7 @@ from pathlib import Path
 import torch
 from torch import Tensor
 
-from ...schema import DrugRecMedicine
+from ...schema import DrugRecMedicine, RankedEvidence
 from ...tracedr import load_tracedr_samples
 from ..experiment.runner import ExperimentAdapter, run_training_experiment
 from ..experiment.schema import ComparableMetrics, ExperimentEvalResult
@@ -24,7 +24,12 @@ from ..pointwise_training import (
 from .data import build_model_sample
 from .metrics import TraceDRMetrics, aggregate_metrics, calculate_metrics
 from .model import HeterogeneousGNN, TraceDRForwardResult
-from .schema import TraceDRAblationConfig, TraceDREntity, TraceDRModelSample
+from .schema import (
+    TraceDRAblationConfig,
+    TraceDREntity,
+    TraceDREvidenceTextMode,
+    TraceDRModelSample,
+)
 
 type TraceDRSnapshot = PointwiseSnapshot
 type TraceDRTrainState = PointwiseTrainState[HeterogeneousGNN, TraceDRModelSample]
@@ -45,7 +50,7 @@ class TrainConfig:
     selection_metric: str = "mrr"
     num_layers: int = 3
     use_evidence_supervision: bool = True
-    evidence_text_mode: str = "full"
+    evidence_text_mode: TraceDREvidenceTextMode = "full"
     include_on_medicine: bool = True
 
 
@@ -145,6 +150,46 @@ def build_ranked_answers(
             )
         )
     return ranked_answers
+
+
+def build_ranked_evidences(
+    sample: TraceDRModelSample,
+    result: TraceDRForwardResult,
+) -> list[RankedEvidence]:
+    """把模型输出转换为排序证据列表。
+
+    Args:
+        sample: 当前样本。
+        result: 当前前向结果。
+
+    Returns:
+        按分数降序排序的证据列表。
+    """
+
+    evidence_scores: Tensor = torch.sigmoid(result.evidence_logits).detach().cpu()
+    sorted_indices_tensor: Tensor = torch.argsort(evidence_scores, descending=True)
+    sorted_indices: list[int] = [int(index) for index in sorted_indices_tensor]
+
+    ranked_evidences: list[RankedEvidence] = []
+    for evidence_index in sorted_indices:
+        if sample.evidence_mask[evidence_index].item() == 0:
+            continue
+
+        evidence: DrugRecMedicine | None = sample.id_to_evidence[evidence_index]
+        if evidence is None:
+            continue
+
+        evidence_text: str = sample.evidences[evidence_index].evidence_text
+        ranked_evidences.append(
+            RankedEvidence(
+                evidence_id=f"retrieval::{evidence.drugid}",
+                score=float(evidence_scores[evidence_index].item()),
+                rank=len(ranked_evidences) + 1,
+                text=evidence_text,
+                label=int(sample.evidence_labels[evidence_index].item()),
+            )
+        )
+    return ranked_evidences
 
 
 def evaluate_model(

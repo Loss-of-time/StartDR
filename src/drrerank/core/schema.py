@@ -108,6 +108,7 @@ class RankedCase:
     patient_id: str
     split: DatasetSplit
     ranked_drugs: list[RankedDrug]
+    ranked_evidences: list[RankedEvidence]
 
 
 @dataclass(slots=True)

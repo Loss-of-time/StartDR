@@ -138,6 +138,7 @@ def copy_medicine(medicine: ExternalDrugRecMedicine) -> DrugRecMedicine:
 def copy_patient(patient: ExternalDrugRecRecord) -> DrugRecRecord:
     """复制患者信息到 RAG 统一结构。"""
 
+    raw_conflict: object | None = getattr(patient, "conflict", None)
     return DrugRecRecord(
         age=patient.age,
         allergen=list(patient.allergen),
@@ -150,7 +151,8 @@ def copy_patient(patient: ExternalDrugRecRecord) -> DrugRecRecord:
         on_medicine=[copy_medicine(item) for item in patient.on_medicine],
         part=patient.part,
         symptom=list(patient.symptom),
-        conflict=list(getattr(patient, "conflict", [])) or None,
+        # 目的：兼容在线病例显式传入 `conflict=None` 的情况，避免统一适配层在 list(None) 时直接崩溃。
+        conflict=list(raw_conflict) if isinstance(raw_conflict, list) else None,
         medicine_num=getattr(patient, "medicine_num", None),
     )
 

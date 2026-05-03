@@ -10,6 +10,8 @@ readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "cattrs",
+    "fastapi",
+    "httpx",
     "jaxtyping",
     "jieba",
     "pyright>=1.1.405",
@@ -18,6 +20,7 @@ dependencies = [
     "torch",
     "torch-geometric",
     "transformers",
+    "uvicorn",
     "viztracer>=1.1.1",
 ]
 
@@ -42,6 +45,7 @@ explicit = true
 [project.scripts]
 function-graph = "function_graph.analysis_cli:main"
 patient-candidates = "drretrieval.patient_candidates:main"
+recommend-api = "drrag.api_server:main"
 rag-eval-generation = "drrag.evaluate_generation:main"
 rag-apply-rerank = "drrag.apply_rerank:main"
 rag-export-cases = "drrag.export_cases:main"

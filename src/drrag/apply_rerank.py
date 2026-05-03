@@ -9,7 +9,7 @@ from typing import cast
 from drrerank.core.schema import RankedCase
 from drrerank.core.schema import structure as structure_ranked_case
 
-from .core.adapters import apply_ranked_drugs
+from .core.adapters import apply_ranked_drugs, apply_ranked_evidences
 from .core.generation import load_rag_cases
 from .core.io import load_jsonl, write_jsonl
 from .core.prompt import freeze_case_candidates
@@ -83,8 +83,9 @@ def apply_rerank(config: ApplyRerankConfig) -> Path:
         if ranked_case is None:
             merged_cases.append(freeze_case_candidates(rag_case, config.top_k))
             continue
-        # 目的：仅补齐 rerank 排序字段，保持候选药物与证据正文仍由原始候选集提供。
+        # 目的：把 TraceDR 的药物与证据排序一并补齐到统一 RAG 样本，保持在线与离线口径一致。
         merged_case: RagCase = apply_ranked_drugs(rag_case, ranked_case.ranked_drugs)
+        merged_case = apply_ranked_evidences(merged_case, ranked_case.ranked_evidences)
         merged_cases.append(freeze_case_candidates(merged_case, config.top_k))
     write_jsonl(
         path=config.output_path,

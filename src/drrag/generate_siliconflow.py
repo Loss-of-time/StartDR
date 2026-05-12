@@ -158,6 +158,8 @@ def build_generation_record(
         error_message = str(error.reason)
     except http.client.RemoteDisconnected as error:
         error_message = str(error)
+    except TimeoutError as error:
+        error_message = str(error)
     except json.JSONDecodeError as error:
         error_message = f"JSONDecodeError: {error.msg}"
 
@@ -322,7 +324,9 @@ def generate_records(config: GenerateConfig) -> Path:
         )
     # 目的：任务结束后再做一次完整写盘，确保最终文件包含全部新旧记录。
     write_generation_records(config.output_path, preserved_records, new_records)
-    print(f"写出完成: {config.output_path.resolve()} rows={len(preserved_records) + len(new_records)}")
+    print(
+        f"写出完成: {config.output_path.resolve()} rows={len(preserved_records) + len(new_records)}"
+    )
     return config.output_path
 
 

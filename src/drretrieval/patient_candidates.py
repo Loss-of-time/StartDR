@@ -105,10 +105,7 @@ def main() -> None:
     print(f"开始构建检索器: {retriever_name}")
     retriever = build_retriever(retriever_name)
     print("开始加载全量药品详情")
-    drug_detail_map = {
-        detail.drugid: detail
-        for detail in list_full_drug_details()
-    }
+    drug_detail_map = {detail.drugid: detail for detail in list_full_drug_details()}
     print(f"开始生成候选集，top_k={args.top_k}")
     samples = build_tracedr_samples(
         patients=patients,

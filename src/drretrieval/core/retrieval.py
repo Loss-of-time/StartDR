@@ -19,6 +19,8 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
+from startdr_common.caution import build_visible_caution_texts
+
 from .kg import list_full_drug_details
 from .schema import (
     DrugRecMedicine,
@@ -59,10 +61,8 @@ def get_corpus(
     lcut = jieba.lcut
     for drug in drugs:
         treatments = [row.treat for row in drug.treat if row.treat is not None]
-        cautions = [
-            f"{row.crowd}{row.caution_level}" if row.caution_level else row.crowd
-            for row in drug.caution
-        ]
+        # 目的：在线检索文档仅保留有等级的 caution，避免无等级年龄节点被写成禁用语义。
+        cautions = build_visible_caution_texts(drug.caution)
         ingredients = [row.ingredient for row in drug.ingredients if row.ingredient is not None]
         document = (
             f"治疗:{', '.join(treatments) if treatments else 'None'}"
@@ -93,10 +93,8 @@ def get_drug_docs(drugs: list[DrugRecMedicine]) -> list[str]:
 
 def build_pyserini_document(drug: DrugRecMedicine) -> str:
     treatments = [row.treat for row in drug.treat if row.treat is not None]
-    cautions = [
-        f"{row.crowd}{row.caution_level}" if row.caution_level else row.crowd
-        for row in drug.caution
-    ]
+    # 目的：保持 Pyserini 文档与在线 RAG/API 的 caution 语义一致。
+    cautions = build_visible_caution_texts(drug.caution)
     ingredients = [row.ingredient for row in drug.ingredients if row.ingredient is not None]
     return (
         f"治疗:{', '.join(treatments) if treatments else 'None'}"
@@ -173,7 +171,7 @@ class BM25Retriever(Retriever):
         query = get_query_tokens(patient)
         if not query or top_k <= 0:
             return []
-        scores = self.bm25.get_scores(query) # TODO 看看默认参数
+        scores = self.bm25.get_scores(query)  # TODO 看看默认参数
         limit = min(top_k, len(self.drug_ids))
         top_indices = scores.argpartition(-limit)[-limit:]
         ranked_indices = top_indices[scores[top_indices].argsort()[::-1]]

@@ -89,9 +89,7 @@ def main() -> None:
     report.config.retriever_name = args.retriever
     report.config.input_path = str(args.input.resolve())
     output_file_name = (
-        args.output_name
-        if args.output_name.endswith(".json")
-        else f"{args.output_name}.json"
+        args.output_name if args.output_name.endswith(".json") else f"{args.output_name}.json"
     )
     output_path = DEFAULT_RETRIEVER_EVAL_OUTPUT_DIR / output_file_name
     output_path.parent.mkdir(parents=True, exist_ok=True)

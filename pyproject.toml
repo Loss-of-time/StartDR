@@ -81,4 +81,4 @@ reportMissingTypeStubs = "none"
 useLibraryCodeForTypes = false
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/drretrieval", "src/drrerank", "src/drrag", "src/function_graph"]
+packages = ["src/drretrieval", "src/drrerank", "src/drrag", "src/function_graph", "src/startdr_common"]

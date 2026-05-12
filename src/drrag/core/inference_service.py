@@ -18,6 +18,7 @@ from drretrieval.core.schema import DrugRecMedicine as RetrievalDrugRecMedicine
 from drretrieval.core.schema import DrugRecRecord as RetrievalDrugRecRecord
 from drretrieval.core.schema import RetrievedDrugCandidate, Retriever, TraceDRSample
 from drretrieval.core.schema import unstructure as unstructure_retrieval
+from startdr_common.caution import build_visible_caution_text, build_visible_caution_texts
 
 from ..generate_siliconflow import build_generation_record
 from .adapters import (
@@ -615,12 +616,9 @@ class OnlineInferenceService:
 
         caution_item: RagDrugCaution
         for caution_item in drug.caution:
-            object_label = (
-                f"{caution_item.crowd}{caution_item.caution_level}"
-                if caution_item.caution_level is not None
-                else caution_item.crowd
-            ).strip()
-            if object_label == "":
+            # 目的：图关系展开只暴露有等级的 caution，避免把无等级年龄节点渲染成禁用关系。
+            object_label: str | None = build_visible_caution_text(caution_item)
+            if object_label is None:
                 continue
             relations.append(
                 GraphRelationView(
@@ -716,12 +714,8 @@ class OnlineInferenceService:
             candidate: RagCandidate | None = candidate_map.get(drugid)
             if candidate is None:
                 continue
-            cautions: list[str] = [
-                f"{item.crowd}{item.caution_level}"
-                if item.caution_level is not None
-                else item.crowd
-                for item in candidate.drug.caution
-            ]
+            # 目的：风险摘要与证据文本保持相同过滤规则，只返回有等级的 caution。
+            cautions: list[str] = build_visible_caution_texts(candidate.drug.caution)
             interactions: list[str] = [
                 item.name for item in candidate.drug.interaction if item.name.strip() != ""
             ]

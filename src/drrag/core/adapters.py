@@ -4,6 +4,7 @@ from collections.abc import Sequence
 
 from drrerank.core import schema as rerank_schema
 from drretrieval.core import schema as retrieval_schema
+from startdr_common.caution import build_visible_caution_texts
 
 from .schema import (
     DrugCaution,
@@ -63,11 +64,8 @@ def build_medicine_evidence_text(medicine: DrugRecMedicine) -> str:
     treat_values: list[str] = [item.treat for item in medicine.treat if item.treat is not None]
     treatments_string: str = ", ".join(treat_values) if treat_values else "None"
 
-    caution_values: list[str] = [
-        f"{item.crowd}{item.caution_level}"
-        for item in medicine.caution
-        if item.caution_level is not None
-    ]
+    # 目的：RAG 证据文本只保留有等级的 caution，避免与在线 API 的禁用语义分叉。
+    caution_values: list[str] = build_visible_caution_texts(medicine.caution)
     caution_string: str = ", ".join(caution_values) if caution_values else "None"
 
     interaction_values: list[str] = [item.name for item in medicine.interaction]
@@ -81,6 +79,46 @@ def build_medicine_evidence_text(medicine: DrugRecMedicine) -> str:
         f"药名:{medicine.name} || 治疗:{treatments_string} || 禁用:{caution_string} || "
         f"成分:{ingredient_string} || 相互作用:{interaction_string}"
     )
+
+
+def build_medicine_field_evidences(
+    drugid: str,
+    medicine: DrugRecMedicine,
+) -> list[tuple[str, str]]:
+    """按字段构造单药多证据文本。
+
+    Args:
+        drugid: 药品 ID。
+        medicine: 药品记录。
+
+    Returns:
+        证据 ID 后缀与证据文本列表。
+    """
+
+    treat_values: list[str] = [item.treat for item in medicine.treat if item.treat is not None]
+    treatments_string: str = ", ".join(treat_values) if treat_values else "None"
+
+    caution_values: list[str] = build_visible_caution_texts(medicine.caution)
+    caution_string: str = ", ".join(caution_values) if caution_values else "None"
+
+    ingredient_values: list[str] = [
+        item.ingredient for item in medicine.ingredients if item.ingredient is not None
+    ]
+    ingredient_string: str = ", ".join(ingredient_values) if ingredient_values else "None"
+
+    interaction_values: list[str] = [item.name for item in medicine.interaction]
+    interaction_string: str = ", ".join(interaction_values) if interaction_values else "None"
+
+    # 目的：把单药复合描述拆成稳定字段证据，使 ev1/ev2/ev3 消融能真实改变 prompt 输入。
+    return [
+        (f"retrieval::{drugid}::treat", f"药名:{medicine.name} || 治疗:{treatments_string}"),
+        (f"retrieval::{drugid}::caution", f"药名:{medicine.name} || 禁用:{caution_string}"),
+        (f"retrieval::{drugid}::ingredient", f"药名:{medicine.name} || 成分:{ingredient_string}"),
+        (
+            f"retrieval::{drugid}::interaction",
+            f"药名:{medicine.name} || 相互作用:{interaction_string}",
+        ),
+    ]
 
 
 def copy_caution(caution: ExternalDrugCaution) -> DrugCaution:
@@ -193,16 +231,23 @@ def build_rag_case(sample: TraceDRSample, candidate_limit: int | None = None) ->
     for rank, (drugid, drug) in enumerate(ranked_items, start=1):
         if candidate_limit is not None and rank > candidate_limit:
             break
-        # 目的：先把 retrieval 结果规整为单药单证据，后续 rerank 只补排序字段即可。
-        evidence: RagEvidence = RagEvidence(
-            evidence_id=f"retrieval::{drugid}",
-            drugid=drugid,
-            text=build_medicine_evidence_text(drug),
-            source="retrieval",
-            retrieval_rank=rank,
-            rerank_rank=None,
-            score=None,
-        )
+        field_evidences: list[tuple[str, str]] = build_medicine_field_evidences(drugid, drug)
+        evidences: list[RagEvidence] = []
+        evidence_rank: int
+        evidence_id: str
+        evidence_text: str
+        for evidence_rank, (evidence_id, evidence_text) in enumerate(field_evidences, start=1):
+            evidences.append(
+                RagEvidence(
+                    evidence_id=evidence_id,
+                    drugid=drugid,
+                    text=evidence_text,
+                    source="retrieval",
+                    retrieval_rank=evidence_rank,
+                    rerank_rank=None,
+                    score=None,
+                )
+            )
         candidates.append(
             RagCandidate(
                 drugid=drugid,
@@ -213,7 +258,7 @@ def build_rag_case(sample: TraceDRSample, candidate_limit: int | None = None) ->
                 retrieval_score=None,
                 rerank_rank=None,
                 rerank_score=None,
-                evidences=[evidence],
+                evidences=evidences,
             )
         )
     return RagCase(

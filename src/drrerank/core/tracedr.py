@@ -134,14 +134,8 @@ def build_patient(
         gender=raw_patient["gender"],
         group=raw_patient["group"],
         id=str(raw_patient["id"]),
-        medicine=[
-            build_medicine(raw_medicine)
-            for raw_medicine in raw_patient["medicine"]
-        ],
-        on_medicine=[
-            build_medicine(raw_medicine)
-            for raw_medicine in raw_patient["on_medicine"]
-        ],
+        medicine=[build_medicine(raw_medicine) for raw_medicine in raw_patient["medicine"]],
+        on_medicine=[build_medicine(raw_medicine) for raw_medicine in raw_patient["on_medicine"]],
         part=split,
         symptom=raw_patient["symptom"],
     )
@@ -177,9 +171,7 @@ def build_candidate_drugs(
 
 
 def build_drugrec_case(sample: TraceDRSample) -> DrugRecCase:
-    gold_drugids = list(
-        dict.fromkeys(medicine.drugid for medicine in sample.people.medicine)
-    )
+    gold_drugids = list(dict.fromkeys(medicine.drugid for medicine in sample.people.medicine))
     gold_drugid_set = set(gold_drugids)
     return DrugRecCase(
         patient_id=sample.people.id,
@@ -205,10 +197,7 @@ def load_tracedr_cases(
     input_path: Path,
     limit: int | None = None,
 ) -> list[DrugRecCase]:
-    return [
-        build_drugrec_case(sample)
-        for sample in load_tracedr_samples(input_path, limit)
-    ]
+    return [build_drugrec_case(sample) for sample in load_tracedr_samples(input_path, limit)]
 
 
 def load_raw_tracedr_dataset(path: Path) -> RawTraceDRDataset:

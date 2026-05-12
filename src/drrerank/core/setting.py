@@ -10,23 +10,11 @@ DEFAULT_RERANK_OUTPUT_DIR = OUTPUT_DIR / "rerank"
 
 DEFAULT_TRACEDR_JSONL_OUTPUT_ROOT = RESOURCE_DIR / "patient_candidate"
 DEFAULT_GNN_TRAIN_INPUT_PATH = (
-    DEFAULT_TRACEDR_JSONL_OUTPUT_ROOT
-    / "pyserini_bm25_top50"
-    / "train.jsonl"
+    DEFAULT_TRACEDR_JSONL_OUTPUT_ROOT / "pyserini_bm25_top50" / "train.jsonl"
 )
-DEFAULT_GNN_DEV_INPUT_PATH = (
-    DEFAULT_TRACEDR_JSONL_OUTPUT_ROOT
-    / "pyserini_bm25_top50"
-    / "dev.jsonl"
-)
+DEFAULT_GNN_DEV_INPUT_PATH = DEFAULT_TRACEDR_JSONL_OUTPUT_ROOT / "pyserini_bm25_top50" / "dev.jsonl"
 DEFAULT_TRACEDR_TRAIN_INPUT_PATH = (
-    DEFAULT_TRACEDR_JSONL_OUTPUT_ROOT
-    / "tracedr_top50"
-    / "train.jsonl"
+    DEFAULT_TRACEDR_JSONL_OUTPUT_ROOT / "tracedr_top50" / "train.jsonl"
 )
-DEFAULT_TRACEDR_DEV_INPUT_PATH = (
-    DEFAULT_TRACEDR_JSONL_OUTPUT_ROOT
-    / "tracedr_top50"
-    / "dev.jsonl"
-)
+DEFAULT_TRACEDR_DEV_INPUT_PATH = DEFAULT_TRACEDR_JSONL_OUTPUT_ROOT / "tracedr_top50" / "dev.jsonl"
 DEFAULT_MODEL_OUTPUT_DIR = OUTPUT_DIR / "model"

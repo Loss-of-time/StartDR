@@ -98,8 +98,8 @@ class FullEncoder(nn.Module):
         assert last_hidden_state is not None
         lm_encodings: TokenEmbeddings = last_hidden_state.to(self.device)
         attention_mask_tensor = cast(Tensor, tokenized_input["attention_mask"])
-        attention_mask: Float[Tensor, "batch seq 1"] = (
-            attention_mask_tensor.unsqueeze(dim=2).to(lm_encodings.dtype)
+        attention_mask: Float[Tensor, "batch seq 1"] = attention_mask_tensor.unsqueeze(dim=2).to(
+            lm_encodings.dtype
         )
         pooled_sum: Float[Tensor, "batch hidden"] = torch.sum(lm_encodings * attention_mask, dim=1)
         pooled_count: Float[Tensor, "batch 1"] = torch.sum(attention_mask, dim=1).clamp(min=1.0)
@@ -127,7 +127,9 @@ class GNNLayer(nn.Module):
         projected_evs: Float[Tensor, "evidence hidden"] = self.w_att(evidences_mat)
         projected_ents: Float[Tensor, "entity hidden"] = self.w_att(entities_mat)
 
-        ev_att_scores: Float[Tensor, "evidence entity"] = projected_evs @ projected_ents.transpose(0, 1)
+        ev_att_scores: Float[Tensor, "evidence entity"] = projected_evs @ projected_ents.transpose(
+            0, 1
+        )
         ev_valid_mask = ev_to_ent > 0
         ev_masked_scores = ev_att_scores.masked_fill(
             ~ev_valid_mask,
@@ -135,9 +137,13 @@ class GNNLayer(nn.Module):
         )
         ev_max_scores = ev_masked_scores.max(dim=0, keepdim=True).values
         ev_has_valid_edge = ev_valid_mask.any(dim=0, keepdim=True)
-        ev_max_scores = torch.where(ev_has_valid_edge, ev_max_scores, torch.zeros_like(ev_max_scores))
-        ev_att_scores = torch.exp(ev_att_scores - ev_max_scores) * ev_to_ent * ev_valid_mask.to(
-            ev_att_scores.dtype
+        ev_max_scores = torch.where(
+            ev_has_valid_edge, ev_max_scores, torch.zeros_like(ev_max_scores)
+        )
+        ev_att_scores = (
+            torch.exp(ev_att_scores - ev_max_scores)
+            * ev_to_ent
+            * ev_valid_mask.to(ev_att_scores.dtype)
         )
         ev_normalizer = ev_att_scores.sum(dim=0, keepdim=True)
         ev_att_scores = torch.where(
@@ -154,7 +160,9 @@ class GNNLayer(nn.Module):
         entities_mat = F.relu(ev_messages_ent + ent_messages_ent)
 
         projected_ents = self.w_att(entities_mat)
-        ent_att_scores: Float[Tensor, "entity evidence"] = projected_ents @ projected_evs.transpose(0, 1)
+        ent_att_scores: Float[Tensor, "entity evidence"] = projected_ents @ projected_evs.transpose(
+            0, 1
+        )
         ent_valid_mask = ent_to_ev > 0
         ent_masked_scores = ent_att_scores.masked_fill(
             ~ent_valid_mask,
@@ -162,9 +170,13 @@ class GNNLayer(nn.Module):
         )
         ent_max_scores = ent_masked_scores.max(dim=0, keepdim=True).values
         ent_has_valid_edge = ent_valid_mask.any(dim=0, keepdim=True)
-        ent_max_scores = torch.where(ent_has_valid_edge, ent_max_scores, torch.zeros_like(ent_max_scores))
-        ent_att_scores = torch.exp(ent_att_scores - ent_max_scores) * ent_to_ev * ent_valid_mask.to(
-            ent_att_scores.dtype
+        ent_max_scores = torch.where(
+            ent_has_valid_edge, ent_max_scores, torch.zeros_like(ent_max_scores)
+        )
+        ent_att_scores = (
+            torch.exp(ent_att_scores - ent_max_scores)
+            * ent_to_ev
+            * ent_valid_mask.to(ent_att_scores.dtype)
         )
         ent_normalizer = ent_att_scores.sum(dim=0, keepdim=True)
         ent_att_scores = torch.where(
@@ -244,6 +256,7 @@ class BilinearAnswering(nn.Module):
             entity_logits=entity_logits,
             loss=loss,
         )
+
 
 class GAT(torch.nn.Module):
     def __init__(

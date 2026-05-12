@@ -172,7 +172,7 @@ def build_gat_model_sample(
     ]
 
     if train and not torch.sum(entity_labels):
-        return None # 无答案跳过
+        return None  # 无答案跳过
 
     # Normalize adjacency matrices
     vec = torch.sum(ent_to_ev, dim=0)
